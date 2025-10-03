@@ -46,7 +46,7 @@ async def generate_af_docs(root_path: Path):
                     "python_use_unqualified_type_names": 1,
                     "autodoc_preserve_defaults": 1,
                     "autodoc_class_signature": "separated",
-                    "autodoc_typehints": "both",
+                    "autodoc_typehints": "description",
                     "autodoc_typehints_format": "fully-qualified",
                     "autodoc_default_options": {
                         "members": 1,
@@ -76,7 +76,8 @@ async def generate_af_docs(root_path: Path):
         str((root_path / "docs" / "build").absolute()),
         "-j",
         json.dumps(package),
-        "--verbose"
+        "--verbose",
+        "agent_framework_meta"
     ]
     try:
         await py2docfx_main(args)
