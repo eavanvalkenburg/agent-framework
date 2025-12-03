@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import Any, Final, cast
 
+from ._threads import Threads
 from ._tools import ToolProtocol
 from ._types import ChatMessage
 
@@ -104,20 +105,24 @@ class ContextProvider(ABC):
     # Default prompt to be used by all context providers when assembling memories/instructions
     DEFAULT_CONTEXT_PROMPT: Final[str] = "## Memories\nConsider the following memories when answering user questions:"
 
-    async def thread_created(self, thread_id: str | None) -> None:
+    async def thread_created(self, thread: Threads) -> None:
         """Called just after a new thread is created.
 
         Implementers can use this method to perform any operations required at the creation
         of a new thread. For example, checking long-term storage for any data that is relevant
         to the current session.
 
+        It should also be used to add a new item to the threads context_states dictionary.
+        The ID can be chosen by the implementer, but it must be unique.
+
         Args:
-            thread_id: The ID of the new thread.
+            thread: The the new thread.
         """
         pass
 
     async def invoked(
         self,
+        thread: Threads,
         request_messages: ChatMessage | Sequence[ChatMessage],
         response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
         invoke_exception: Exception | None = None,
@@ -128,6 +133,7 @@ class ContextProvider(ABC):
         You can inspect the request and response messages, and update the state of the context provider.
 
         Args:
+            thread: The thread associated with the invocation.
             request_messages: The messages that were sent to the model/agent.
             response_messages: The messages that were returned by the model/agent.
             invoke_exception: The exception that was thrown, if any.
@@ -138,13 +144,19 @@ class ContextProvider(ABC):
         pass
 
     @abstractmethod
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(
+        self,
+        thread: Threads,
+        messages: ChatMessage | MutableSequence[ChatMessage],
+        **kwargs: Any,
+    ) -> Context:
         """Called just before the model/agent is invoked.
 
         Implementers can load any additional context required at this time,
         and they should return any context that should be passed to the agent.
 
         Args:
+            thread: The thread associated with the invocation.
             messages: The most recent messages that the agent is being invoked with.
 
         Keyword Args:
@@ -239,12 +251,14 @@ class AggregateContextProvider(ContextProvider):
         self.providers.append(context_provider)
 
     @override
-    async def thread_created(self, thread_id: str | None = None) -> None:
-        await asyncio.gather(*[x.thread_created(thread_id) for x in self.providers])
+    async def thread_created(self, thread: Threads) -> None:
+        await asyncio.gather(*[x.thread_created(thread) for x in self.providers])
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
-        contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
+    async def invoking(
+        self, thread: Threads, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any
+    ) -> Context:
+        contexts = await asyncio.gather(*[provider.invoking(thread, messages, **kwargs) for provider in self.providers])
         instructions: str = ""
         return_messages: list[ChatMessage] = []
         tools: list[ToolProtocol] = []
@@ -260,6 +274,7 @@ class AggregateContextProvider(ContextProvider):
     @override
     async def invoked(
         self,
+        thread: Threads,
         request_messages: ChatMessage | Sequence[ChatMessage],
         response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
         invoke_exception: Exception | None = None,
@@ -267,6 +282,7 @@ class AggregateContextProvider(ContextProvider):
     ) -> None:
         await asyncio.gather(*[
             x.invoked(
+                thread,
                 request_messages=request_messages,
                 response_messages=response_messages,
                 invoke_exception=invoke_exception,

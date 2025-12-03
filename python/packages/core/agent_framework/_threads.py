@@ -1,14 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import MutableMapping, Sequence
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 
-from ._memory import AggregateContextProvider
 from ._serialization import SerializationMixin
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
 
-__all__ = ["AgentThread", "ChatMessageStore", "ChatMessageStoreProtocol"]
+__all__ = ["AgentThread", "ChatMessageStore", "ChatMessageStoreProtocol", "HostedThread", "LocalThread", "Threads"]
 
 
 class ChatMessageStoreProtocol(Protocol):
@@ -327,7 +326,7 @@ class AgentThread:
         *,
         service_thread_id: str | None = None,
         message_store: ChatMessageStoreProtocol | None = None,
-        context_provider: AggregateContextProvider | None = None,
+        # context_provider: AggregateContextProvider | None = None,
     ) -> None:
         """Initialize an AgentThread, do not use this method manually, always use: ``agent.get_new_thread()``.
 
@@ -344,7 +343,7 @@ class AgentThread:
 
         self._service_thread_id = service_thread_id
         self._message_store = message_store
-        self.context_provider = context_provider
+        # self.context_provider = context_provider
 
     @property
     def is_initialized(self) -> bool:
@@ -503,3 +502,73 @@ class AgentThread:
             return
         # Create the message store from the default.
         self.message_store = ChatMessageStore(messages=state.chat_message_store_state.messages, **kwargs)
+
+
+class BaseThread(SerializationMixin):
+    """Base class for agent threads."""
+
+    def __init__(
+        self, *, context_states: dict[str, Any] | None = None, additional_properties: dict[str, Any] | None = None
+    ) -> None:
+        """Initialize the base thread.
+
+        Keyword Args:
+            context_states: Optional dictionary of context provider states.
+            additional_properties: Optional dictionary of additional properties.
+        """
+        self.context_states = context_states or {}
+        self.additional_properties = additional_properties or {}
+
+
+class LocalThread(BaseThread):
+    """Class representing a locally managed agent thread."""
+
+    def __init__(
+        self,
+        messages: Sequence[ChatMessage] | Sequence[dict[str, Any]] | None = None,
+        *,
+        context_states: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a LocalThread.
+
+        Args:
+            messages: Optional sequence of ChatMessage instances to initialize the message store.
+
+        Keyword Args:
+            context_states: Optional dictionary of context provider states.
+            **kwargs: Additional keyword arguments.
+                Stored in additional_properties.
+        """
+        super().__init__(context_states=context_states, additional_properties=kwargs)
+        if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+            self.messages = [ChatMessage.from_dict(msg) for msg in messages]  # type: ignore[list-item]
+        self.messages = cast(list[ChatMessage], messages or [])
+
+
+class HostedThread(BaseThread):
+    """Class representing a service-hosted agent thread."""
+
+    def __init__(
+        self,
+        hosted_thread_id: str | None = None,
+        *,
+        context_states: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a HostedThread.
+
+        Args:
+            hosted_thread_id: The ID of the thread managed by the agent service.
+
+        Keyword Args:
+            context_states: Optional dictionary of context provider states.
+            **kwargs: Additional keyword arguments.
+                Stored in additional_properties.
+        """
+        super().__init__(context_states=context_states, additional_properties=kwargs)
+        self.hosted_thread_id = hosted_thread_id
+
+
+Threads = LocalThread | HostedThread
+"""Type alias for agent threads, which can be either LocalThread or HostedThread."""

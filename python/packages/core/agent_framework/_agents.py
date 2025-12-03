@@ -5,7 +5,7 @@ import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from copy import deepcopy
+from copy import copy, deepcopy
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
@@ -21,7 +21,7 @@ from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
-from ._threads import AgentThread, ChatMessageStoreProtocol
+from ._threads import AgentThread, ChatMessageStoreProtocol, HostedThread, LocalThread, Threads
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
     AgentRunResponse,
@@ -33,7 +33,7 @@ from ._types import (
     Role,
     ToolMode,
 )
-from .exceptions import AgentExecutionException, AgentInitializationError
+from .exceptions import AgentInitializationError
 from .observability import use_agent_observability
 
 if sys.version_info >= (3, 12):
@@ -184,7 +184,7 @@ class AgentProtocol(Protocol):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
-        thread: AgentThread | None = None,
+        thread: Threads | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Get a response from the agent.
@@ -215,7 +215,7 @@ class AgentProtocol(Protocol):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
-        thread: AgentThread | None = None,
+        thread: Threads | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Run the agent as a stream.
@@ -237,8 +237,12 @@ class AgentProtocol(Protocol):
         """
         ...
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Creates a new conversation thread for the agent."""
+    def get_local_thread(self, **kwargs: Any) -> LocalThread:
+        """Creates a new local conversation thread for the agent."""
+        ...
+
+    def get_hosted_thread(self, **kwargs: Any) -> HostedThread:
+        """Creates a new hosted conversation thread for the agent."""
         ...
 
 
@@ -332,30 +336,6 @@ class BaseAgent(SerializationMixin):
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
         self.additional_properties.update(kwargs)
 
-    async def _notify_thread_of_new_messages(
-        self,
-        thread: AgentThread,
-        input_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage],
-        **kwargs: Any,
-    ) -> None:
-        """Notify the thread of new messages.
-
-        This also calls the invoked method of a potential context provider on the thread.
-
-        Args:
-            thread: The thread to notify of new messages.
-            input_messages: The input messages to notify about.
-            response_messages: The response messages to notify about.
-            **kwargs: Any extra arguments to pass from the agent run.
-        """
-        if isinstance(input_messages, ChatMessage) or len(input_messages) > 0:
-            await thread.on_new_messages(input_messages)
-        if isinstance(response_messages, ChatMessage) or len(response_messages) > 0:
-            await thread.on_new_messages(response_messages)
-        if thread.context_provider:
-            await thread.context_provider.invoked(input_messages, response_messages, **kwargs)
-
     @property
     def display_name(self) -> str:
         """Returns the display name of the agent.
@@ -364,31 +344,34 @@ class BaseAgent(SerializationMixin):
         """
         return self.name or self.id
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Return a new AgentThread instance that is compatible with the agent.
+    async def get_local_thread(self, **kwargs: Any) -> LocalThread:
+        """Return a new LocalThread instance that is compatible with the agent.
 
         Keyword Args:
             kwargs: Additional keyword arguments passed to AgentThread.
 
         Returns:
-            A new AgentThread instance configured with the agent's context provider.
+            A new LocalThread instance configured with the agent's context provider states.
         """
-        return AgentThread(**kwargs, context_provider=self.context_provider)
+        thread = LocalThread(**kwargs)
+        if self.context_provider:
+            async with self.context_provider:
+                await self.context_provider.thread_created(thread)
+        return thread
 
-    async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
-        """Deserialize a thread from its serialized state.
-
-        Args:
-            serialized_thread: The serialized thread data.
+    async def get_hosted_thread(self, **kwargs: Any) -> HostedThread:
+        """Return a new HostedThread instance that is compatible with the agent.
 
         Keyword Args:
-            kwargs: Additional keyword arguments.
+            kwargs: Additional keyword arguments passed to AgentThread.
 
         Returns:
-            A new AgentThread instance restored from the serialized state.
+            A new HostedThread instance configured with the agent's context provider states.
         """
-        thread: AgentThread = self.get_new_thread()
-        await thread.update_from_thread_state(serialized_thread, **kwargs)
+        thread = HostedThread(**kwargs)
+        if self.context_provider:
+            async with self.context_provider:
+                await self.context_provider.thread_created(thread)
         return thread
 
     def as_tool(
@@ -769,7 +752,7 @@ class ChatAgent(BaseAgent):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
-        thread: AgentThread | None = None,
+        thread: Threads | None = None,
         allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
@@ -780,7 +763,6 @@ class ChatAgent(BaseAgent):
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
@@ -816,7 +798,6 @@ class ChatAgent(BaseAgent):
             response_format: The format of the response.
             seed: The random seed to use.
             stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
             tools: The tools to use for the request.
@@ -858,7 +839,6 @@ class ChatAgent(BaseAgent):
         merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
             model_id=model_id,
-            conversation_id=thread.service_thread_id,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
@@ -868,7 +848,6 @@ class ChatAgent(BaseAgent):
             response_format=response_format,
             seed=seed,
             stop=stop,
-            store=store,
             temperature=temperature,
             tool_choice=tool_choice,
             tools=final_tools,
@@ -876,6 +855,12 @@ class ChatAgent(BaseAgent):
             user=user,
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
+        if isinstance(thread, HostedThread):
+            co.store = True
+            co.conversation_id = thread.hosted_thread_id
+        elif isinstance(thread, LocalThread):
+            co.store = False
+            co.conversation_id = None
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response = await self.chat_client.get_response(
@@ -884,8 +869,6 @@ class ChatAgent(BaseAgent):
             **filtered_kwargs,
         )
 
-        await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
             if message.author_name is None:
@@ -893,7 +876,14 @@ class ChatAgent(BaseAgent):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+        if isinstance(thread, HostedThread) and response.conversation_id:
+            thread.hosted_thread_id = response.conversation_id
+        if isinstance(thread, LocalThread):
+            thread.messages.extend(input_messages)
+            thread.messages.extend(response.messages)
+        if thread and self.context_provider:
+            async with self.context_provider:
+                await self.context_provider.invoked(thread, input_messages, response.messages)
         return AgentRunResponse(
             messages=response.messages,
             response_id=response.response_id,
@@ -908,7 +898,7 @@ class ChatAgent(BaseAgent):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
-        thread: AgentThread | None = None,
+        thread: Threads | None = None,
         allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
@@ -919,7 +909,6 @@ class ChatAgent(BaseAgent):
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
         temperature: float | None = None,
         tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
@@ -955,7 +944,6 @@ class ChatAgent(BaseAgent):
             response_format: The format of the response.
             seed: The random seed to use.
             stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
             tools: The tools to use for the request.
@@ -995,7 +983,6 @@ class ChatAgent(BaseAgent):
 
         merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
-            conversation_id=thread.service_thread_id,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
@@ -1006,7 +993,6 @@ class ChatAgent(BaseAgent):
             response_format=response_format,
             seed=seed,
             stop=stop,
-            store=store,
             temperature=temperature,
             tool_choice=tool_choice,
             tools=final_tools,
@@ -1014,6 +1000,12 @@ class ChatAgent(BaseAgent):
             user=user,
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
+        if isinstance(thread, HostedThread):
+            co.store = True
+            co.conversation_id = thread.hosted_thread_id
+        elif isinstance(thread, LocalThread):
+            co.store = False
+            co.conversation_id = None
 
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
@@ -1040,55 +1032,32 @@ class ChatAgent(BaseAgent):
             )
 
         response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
-        await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages, **kwargs)
+        if isinstance(thread, HostedThread) and response.conversation_id:
+            thread.hosted_thread_id = response.conversation_id
+        if isinstance(thread, LocalThread):
+            thread.messages.extend(input_messages)
+            thread.messages.extend(response.messages)
 
     @override
-    def get_new_thread(
+    async def get_hosted_thread(
         self,
-        *,
-        service_thread_id: str | None = None,
         **kwargs: Any,
-    ) -> AgentThread:
-        """Get a new conversation thread for the agent.
+    ) -> HostedThread:
+        """Get a new remote thread for the agent.
 
-        If you supply a service_thread_id, the thread will be marked as service managed.
-
-        If you don't supply a service_thread_id but have a conversation_id configured on the agent,
-        that conversation_id will be used to create a service-managed thread.
-
-        If you don't supply a service_thread_id but have a chat_message_store_factory configured on the agent,
-        that factory will be used to create a message store for the thread and the thread will be
-        managed locally.
-
-        When neither is present, the thread will be created without a service ID or message store.
-        This will be updated based on usage when you run the agent with this thread.
-        If you run with ``store=True``, the response will include a thread_id and that will be set.
-        Otherwise a message store is created from the default factory.
+        This will check if the chat client supports remote threads
+        and create one if possible.
 
         Keyword Args:
-            service_thread_id: Optional service managed thread ID.
-            kwargs: Not used at present.
+            kwargs: passed to the local thread creation.
 
         Returns:
-            A new AgentThread instance.
+            A new HostedThread instance.
         """
-        if service_thread_id is not None:
-            return AgentThread(
-                service_thread_id=service_thread_id,
-                context_provider=self.context_provider,
-            )
-        if self.chat_options.conversation_id is not None:
-            return AgentThread(
-                service_thread_id=self.chat_options.conversation_id,
-                context_provider=self.context_provider,
-            )
-        if self.chat_message_store_factory is not None:
-            return AgentThread(
-                message_store=self.chat_message_store_factory(),
-                context_provider=self.context_provider,
-            )
-        return AgentThread(context_provider=self.context_provider)
+        if not getattr(self.chat_client, "__HOSTED_THREAD_SUPPORT__", None):
+            # TODO(eavanvalkenburg): specify error type
+            raise AgentInitializationError("The chat client used by this agent does not support hosted threads.")
+        return await super().get_hosted_thread(**kwargs)
 
     def as_mcp_server(
         self,
@@ -1199,45 +1168,13 @@ class ChatAgent(BaseAgent):
 
         return server
 
-    async def _update_thread_with_type_and_conversation_id(
-        self, thread: AgentThread, response_conversation_id: str | None
-    ) -> None:
-        """Update thread with storage type and conversation ID.
-
-        Args:
-            thread: The thread to update.
-            response_conversation_id: The conversation ID from the response, if any.
-
-        Raises:
-            AgentExecutionException: If conversation ID is missing for service-managed thread.
-        """
-        if response_conversation_id is None and thread.service_thread_id is not None:
-            # We were passed a thread that is service managed, but we got no conversation id back from the chat client,
-            # meaning the service doesn't support service managed threads,
-            # so the thread cannot be used with this service.
-            raise AgentExecutionException(
-                "Service did not return a valid conversation id when using a service managed thread."
-            )
-
-        if response_conversation_id is not None:
-            # If we got a conversation id back from the chat client, it means that the service
-            # supports server side thread storage so we should update the thread with the new id.
-            thread.service_thread_id = response_conversation_id
-            if thread.context_provider:
-                await thread.context_provider.thread_created(thread.service_thread_id)
-        elif thread.message_store is None and self.chat_message_store_factory is not None:
-            # If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
-            # the thread has no message_store yet, and we have a custom messages store, we should update the thread
-            # with the custom message_store so that it has somewhere to store the chat history.
-            thread.message_store = self.chat_message_store_factory()
-
     async def _prepare_thread_and_messages(
         self,
         *,
-        thread: AgentThread | None,
+        thread: Threads | None,
         input_messages: list[ChatMessage] | None = None,
         **kwargs: Any,
-    ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
+    ) -> tuple[Threads | None, ChatOptions, list[ChatMessage]]:
         """Prepare the thread and messages for agent execution.
 
         This method prepares the conversation thread, merges context provider data,
@@ -1258,19 +1195,16 @@ class ChatAgent(BaseAgent):
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
         chat_options = deepcopy(self.chat_options) if self.chat_options else ChatOptions()
-        thread = thread or self.get_new_thread()
-        if thread.service_thread_id and thread.context_provider:
-            await thread.context_provider.thread_created(thread.service_thread_id)
-        thread_messages: list[ChatMessage] = []
-        if thread.message_store:
-            thread_messages.extend(await thread.message_store.list_messages() or [])
+        if not thread:
+            return None, chat_options, input_messages or []
+        messages: list[ChatMessage] = [] if isinstance(thread, HostedThread) else copy(thread.messages)
         context: Context | None = None
         if self.context_provider:
             async with self.context_provider:
-                context = await self.context_provider.invoking(input_messages or [], **kwargs)
+                context = await self.context_provider.invoking(thread, input_messages or [], **kwargs)
                 if context:
                     if context.messages:
-                        thread_messages.extend(context.messages)
+                        messages.extend(context.messages)
                     if context.tools:
                         if chat_options.tools is not None:
                             chat_options.tools.extend(context.tools)
@@ -1282,17 +1216,8 @@ class ChatAgent(BaseAgent):
                             if not chat_options.instructions
                             else f"{chat_options.instructions}\n{context.instructions}"
                         )
-        thread_messages.extend(input_messages or [])
-        if (
-            thread.service_thread_id
-            and chat_options.conversation_id
-            and thread.service_thread_id != chat_options.conversation_id
-        ):
-            raise AgentExecutionException(
-                "The conversation_id set on the agent is different from the one set on the thread, "
-                "only one ID can be used for a run."
-            )
-        return thread, chat_options, thread_messages
+        messages.extend(input_messages or [])
+        return thread, chat_options, messages
 
     def _get_agent_name(self) -> str:
         """Get the agent name for message attribution.

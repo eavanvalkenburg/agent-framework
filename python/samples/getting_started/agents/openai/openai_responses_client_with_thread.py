@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -24,7 +24,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def example_with_automatic_thread_creation() -> None:
+async def example_with_no_thread_creation() -> None:
     """Example showing automatic thread creation."""
     print("=== Automatic Thread Creation Example ===")
 
@@ -62,26 +62,29 @@ async def example_with_thread_persistence_in_memory() -> None:
     )
 
     # Create a new thread that will be reused
-    thread = agent.get_new_thread()
+    thread = await agent.get_local_thread()
 
     # First conversation
     query1 = "What's the weather like in Tokyo?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, thread=thread, store=False)
+    result1 = await agent.run(query1, thread=thread)
     print(f"Agent: {result1.text}")
 
     # Second conversation using the same thread - maintains context
     query2 = "How about London?"
     print(f"\nUser: {query2}")
-    result2 = await agent.run(query2, thread=thread, store=False)
+    result2 = await agent.run(query2, thread=thread)
     print(f"Agent: {result2.text}")
 
     # Third conversation - agent should remember both previous cities
     query3 = "Which of the cities I asked about has better weather?"
     print(f"\nUser: {query3}")
-    result3 = await agent.run(query3, thread=thread, store=False)
+    result3 = await agent.run(query3, thread=thread)
     print(f"Agent: {result3.text}")
     print("Note: The agent remembers context from previous messages in the same thread.\n")
+
+    print("The conversation is fully available in the thread:")
+    print(thread.to_json(indent=2)[:500] + "\n...")  # Print first 500 chars for brevity
 
 
 async def example_with_existing_thread_id() -> None:
@@ -101,7 +104,7 @@ async def example_with_existing_thread_id() -> None:
     )
 
     # Start a conversation and get the thread ID
-    thread = agent.get_new_thread()
+    thread = await agent.get_hosted_thread()
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
@@ -109,7 +112,7 @@ async def example_with_existing_thread_id() -> None:
     print(f"Agent: {result1.text}")
 
     # The thread ID is set after the first response
-    existing_thread_id = thread.service_thread_id
+    existing_thread_id = thread.hosted_thread_id
     print(f"Thread ID: {existing_thread_id}")
 
     if existing_thread_id:
@@ -122,7 +125,7 @@ async def example_with_existing_thread_id() -> None:
         )
 
         # Create a thread with the existing ID
-        thread = AgentThread(service_thread_id=existing_thread_id)
+        thread = await agent.get_hosted_thread(hosted_thread_id=existing_thread_id)
 
         query2 = "What was the last city I asked about?"
         print(f"User: {query2}")
@@ -130,13 +133,16 @@ async def example_with_existing_thread_id() -> None:
         print(f"Agent: {result2.text}")
         print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
 
+        print("The conversation is fully serializable:")
+        print(thread.to_json(indent=2))
+
 
 async def main() -> None:
     print("=== OpenAI Response Client Agent Thread Management Examples ===\n")
 
-    await example_with_automatic_thread_creation()
     await example_with_thread_persistence_in_memory()
     await example_with_existing_thread_id()
+    await example_with_no_thread_creation()
 
 
 if __name__ == "__main__":

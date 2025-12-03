@@ -79,6 +79,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
+    __HOSTED_THREAD_SUPPORT__: bool = True
 
     # region Inner Methods
 
