@@ -1196,7 +1196,12 @@ class ChatAgent(BaseAgent):
         """
         chat_options = deepcopy(self.chat_options) if self.chat_options else ChatOptions()
         if not thread:
-            return None, chat_options, input_messages or []
+            if chat_options.conversation_id or chat_options.store is True:
+                thread = await self.get_hosted_thread(hosted_thread_id=chat_options.conversation_id)
+            elif chat_options.store is False:
+                thread = await self.get_local_thread()
+            else:
+                return None, chat_options, input_messages or []
         messages: list[ChatMessage] = [] if isinstance(thread, HostedThread) else copy(thread.messages)
         context: Context | None = None
         if self.context_provider:
