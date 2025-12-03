@@ -147,3 +147,74 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+"""
+Example Output:
+=== OpenAI Response Client Agent Thread Management Examples ===
+
+=== Thread Persistence Example (In-Memory) ===
+User: What's the weather like in Tokyo?
+Agent: Sunny in Tokyo today with a high of 26°C. Want the current temperature, hourly forecast, or a 7-day outlook? I can pull those up.
+
+User: How about London?
+Agent: Stormy in London today with a high of 25°C. Want the current temperature, hourly forecast, or a 7-day outlook? I can pull those up.
+
+User: Which of the cities I asked about has better weather?
+Agent: Tokyo currently has better weather: sunny and 26°C, while London is stormy at around 25°C. Of course, "better" depends on your preferences (clear skies vs rain). Want me to pull the current temperatures and hourly forecasts for both to compare more precisely?
+Note: The agent remembers context from previous messages in the same thread.
+
+The conversation is fully available in the thread:
+{
+  "type": "local_thread",
+  "context_states": {},
+  "additional_properties": {},
+  "messages": [
+    {
+      "type": "chat_message",
+      "role": {
+        "type": "role",
+        "value": "user"
+      },
+      "contents": [
+        {
+          "type": "text",
+          "text": "What's the weather like in Tokyo?"
+        }
+      ],
+      "additional_properties": {}
+    },
+    {
+      "type": "chat_message",
+      "role": {
+        "type": "role",
+        "value": "assistant"
+      },
+      "c
+...
+=== Existing Thread ID Example ===
+User: What's the weather in Paris?
+Agent: Paris is currently stormy with a high of 23°C. Would you like a more detailed breakdown (wind, humidity, precipitation chances) or the forecast for the next few days? And did you mean Paris, France?
+Thread ID: resp_0ef4cb128886c614006930456bd4448194876cff912c9ea9c7
+
+--- Continuing with the same thread ID in a new agent instance ---
+User: What was the last city I asked about?
+Agent: Paris.
+Note: The agent continues the conversation from the previous thread by using thread ID.
+
+The conversation is fully serializable:
+{
+  "type": "hosted_thread",
+  "context_states": {},
+  "additional_properties": {},
+  "hosted_thread_id": "resp_0ef4cb128886c614006930457451cc8194ac2463b95bb94542"
+}
+=== Automatic Thread Creation Example ===
+User: What's the weather like in Seattle?
+Agent: The weather in Seattle is cloudy with a high around 16°C (about 62°F). Want the current conditions, wind/humidity details, or an hourly/daily forecast (in Fahrenheit if you prefer)?
+
+User: What was the last city I asked about?
+Agent: I don’t have a record of any city in this chat yet. If you tell me the city you’re referring to (or remind me from a previous session), I can help. Want me to fetch the current weather for a city now?
+Note: Each call creates a separate thread, so the agent doesn't remember previous context.
+
+"""
