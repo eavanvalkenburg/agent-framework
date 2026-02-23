@@ -175,6 +175,19 @@ async def test_openai_error_when_no_model_id() -> None:
         await client.get_embeddings(["test"])
 
 
+async def test_openai_empty_values_returns_empty(openai_unit_test_env: None) -> None:
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock()
+
+    result = await client.get_embeddings([])
+
+    assert len(result) == 0
+    assert result.usage is None
+    client.client.embeddings.create.assert_not_called()
+
+
 # --- Azure OpenAI unit tests ---
 
 

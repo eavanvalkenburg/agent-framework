@@ -58,6 +58,10 @@ class RawOpenAIEmbeddingClient(
 ):
     """Raw OpenAI embedding client without telemetry."""
 
+    def service_url(self) -> str:
+        """Get the URL of the service."""
+        return str(self.client.base_url) if self.client else "Unknown"
+
     async def get_embeddings(
         self,
         values: Sequence[str],
@@ -74,8 +78,11 @@ class RawOpenAIEmbeddingClient(
             Generated embeddings with usage metadata.
 
         Raises:
-            ValueError: If model_id is not provided.
+            ValueError: If model_id is not provided or values is empty.
         """
+        if not values:
+            return GeneratedEmbeddings([], options=options)
+
         opts: dict[str, Any] = dict(options) if options else {}
         model = opts.get("model_id") or self.model_id
         if not model:
