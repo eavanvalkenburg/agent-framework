@@ -254,7 +254,11 @@ class FunctionTool(SerializationMixin):
                 Default is that approval is NOT required (``"never_require"``).
             max_invocations: The maximum number of times this function can be invoked
                 across the **lifetime of this tool instance**. If None (default),
-                there is no limit. Should be at least 1.
+                there is no limit. Should be at least 1. If the tool is called multiple
+                times in one iteration, those will execute, after that it will stop working. For example,
+                if max_invocations is 3 and the tool is called 5 times in a single iteration,
+                these will complete, but any subsequent calls to the tool (in the same or future iterations)
+                will raise a ToolException.
 
                 .. note::
                     This counter lives on the tool instance and is never automatically

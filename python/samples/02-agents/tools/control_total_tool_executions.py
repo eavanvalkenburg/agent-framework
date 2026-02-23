@@ -19,7 +19,11 @@ executed during an agent run.  There are three complementary mechanisms:
 
 2. ``max_function_calls`` (on the chat client) — caps the **total number of
    individual function invocations** across all iterations within a single
-   request.  This is the primary knob for cost control.
+   request.  This is the primary knob for cost control. If the tool is called multiple
+   times in one iteration, those will execute, after that it will stop working. For example,
+   if max_invocations is 3 and the tool is called 5 times in a single iteration,
+   these will complete, but any subsequent calls to the tool (in the same or future iterations)
+   will raise a ToolException.
 
 3. ``max_invocations`` (on a tool) — caps the **lifetime invocation count**
    of a specific tool instance.  The counter is never automatically reset,
@@ -34,7 +38,7 @@ Choose the right mechanism for your scenario:
 • Prevent runaway LLM loops  →  ``max_iterations``
 • Best-effort cap on tool execution cost per request  →  ``max_function_calls``
   (checked between iterations; a single batch of parallel calls may overshoot)
-• Limit a specific expensive tool globally  →  ``max_invocations``
+• Best-effort limit a specific expensive tool globally  →  ``max_invocations``
 • Per-agent limits on shared tools  →  wrap the callable separately per agent
 """
 
