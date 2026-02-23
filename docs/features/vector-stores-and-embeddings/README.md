@@ -314,6 +314,8 @@ Each connector follows the AF package structure:
 #### 7.2 — SQL Server (`packages/sql-server/`)
 #### 7.3 — FAISS (`packages/faiss/` or in core extending InMemory)
 
+> **Note:** When implementing any SQL-based connector (PostgreSQL, SQL Server, SQLite, Cosmos DB), review the .NET MEVD changes made by @roji (Shay Rojansky) in SK for design patterns, query building, filter translation, and feature parity: https://github.com/microsoft/semantic-kernel/pulls?q=is%3Apr+author%3Aroji+is%3Aclosed
+
 ---
 
 ### Phase 8: Vector Store CRUD Tools
