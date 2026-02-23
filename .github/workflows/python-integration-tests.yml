@@ -2,6 +2,10 @@
 # Dedicated Python integration tests workflow, called from the manual integration test orchestrator.
 # Runs all tests (unit + integration) split into parallel jobs by provider.
 #
+# NOTE: This workflow and python-merge-tests.yml share the same set of parallel
+# test jobs. Keep them in sync — when adding, removing, or modifying a job here,
+# apply the same change to python-merge-tests.yml.
+#
 
 name: python-integration-tests
 

@@ -121,12 +121,21 @@ The merge CI workflow (`python-merge-tests.yml`) splits integration tests into p
 
 Core infrastructure changes (e.g., `_agents.py`, `_types.py`) trigger all integration test jobs. Scheduled and manual runs always execute all jobs.
 
+### Keeping CI Workflows in Sync
+
+Two workflow files define the same set of parallel test jobs:
+
+- **`python-merge-tests.yml`** — runs on PRs, merge queue, schedule, and manual dispatch. Uses path-based change detection to skip unaffected integration jobs.
+- **`python-integration-tests.yml`** — called from the manual integration test orchestrator (`integration-tests-manual.yml`). Always runs all jobs (no path filtering).
+
+These workflows must be kept in sync. When you add, remove, or modify a test job, update **both** files. The job structure, pytest commands, and xdist flags should match between them. The only difference is that `python-merge-tests.yml` has path filters and conditional job execution, while `python-integration-tests.yml` does not.
+
 ### Updating the CI When Adding Integration Tests for a New Provider
 
-When adding integration tests for a new provider package, you must update **two things** in `python-merge-tests.yml`:
+When adding integration tests for a new provider package, you must update **both** `python-merge-tests.yml` and `python-integration-tests.yml`:
 
-1. **Add a path filter** for the new provider in the `paths-filter` job so the CI knows which file changes should trigger those tests.
-2. **Assign the tests to a CI job** — either add them to the existing `python-tests-misc-integration` job, or create a dedicated job if the provider:
+1. **Add a path filter** for the new provider in the `paths-filter` job in `python-merge-tests.yml` so the CI knows which file changes should trigger those tests.
+2. **Add the test job to both workflow files** — either add them to the existing `python-tests-misc-integration` job, or create a dedicated job if the provider:
    - Has a large number of integration tests
    - Requires special infrastructure setup (emulators, Docker containers, etc.)
    - Has long-running tests that would slow down the misc job

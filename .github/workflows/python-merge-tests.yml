@@ -1,4 +1,9 @@
 name: Python - Merge - Tests
+#
+# NOTE: This workflow and python-integration-tests.yml share the same set of
+# parallel test jobs. Keep them in sync — when adding, removing, or modifying a
+# job here, apply the same change to python-integration-tests.yml.
+#
 
 on:
   workflow_dispatch:

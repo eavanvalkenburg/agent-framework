@@ -691,4 +691,4 @@ pytestmark = [
 ]
 ```
 
-When adding integration tests for a new provider, update the path filters and job assignments in `python-merge-tests.yml`. See the `python-testing` skill for details.
+When adding integration tests for a new provider, update the path filters and job assignments in **both** `python-merge-tests.yml` and `python-integration-tests.yml` — these workflows must be kept in sync. See the `python-testing` skill for details.
