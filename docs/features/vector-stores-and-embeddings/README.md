@@ -194,7 +194,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 - No `SearchType` enum — use `Literal["vector", "keyword_hybrid"]` instead, per AF convention of avoiding unnecessary imports
 - `VectorStoreField` plain class (not Pydantic)
 - `VectorStoreCollectionDefinition` class (not Pydantic internally, but supports Pydantic models as input)
-- `SearchOptions` plain class
+- `SearchOptions` plain class — includes `score_threshold: float | None` for filtering results by score (see note below)
 - `SearchResponse` generic class
 - `RecordFilterOptions` plain class
 - `DISTANCE_FUNCTION_DIRECTION_HELPER` dict
@@ -383,3 +383,5 @@ Each connector follows the AF package structure:
    - `create_get_tool(...)` → tool for retrieving records by key
    - `create_delete_tool(...)` → tool for deleting records
    - These are separate from search and are placed in a later phase
+
+10. **Score threshold filtering**: `SearchOptions` includes `score_threshold: float | None` to filter search results by relevance score (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). The semantics depend on the distance function: for similarity functions (cosine similarity, dot product), results *below* the threshold are filtered out; for distance functions (cosine distance, euclidean), results *above* the threshold are filtered out. Use `DISTANCE_FUNCTION_DIRECTION_HELPER` to determine direction. Connectors should implement this natively where the database supports it, falling back to client-side post-filtering otherwise.
