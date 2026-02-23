@@ -814,7 +814,7 @@ def test_prepare_options_with_instructions(openai_unit_test_env: dict[str, str])
     assert "messages" in prepared_options
     assert len(prepared_options["messages"]) == 2
     assert prepared_options["messages"][0]["role"] == "system"
-    assert prepared_options["messages"][0]["content"][0]["text"] == "You are a helpful assistant."
+    assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
 
 
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
@@ -849,6 +849,71 @@ def test_prepare_message_with_tool_result_author_name(openai_unit_test_env: dict
     assert len(prepared) == 1
     # Should not have 'name' field for tool messages
     assert "name" not in prepared[0]
+
+
+def test_prepare_system_message_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that system message content is a plain string, not a list.
+
+    Some OpenAI-compatible endpoints (e.g. NVIDIA NIM) reject system messages
+    with list content. See https://github.com/microsoft/agent-framework/issues/1407
+    """
+    client = OpenAIChatClient()
+
+    message = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "system"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "You are a helpful assistant."
+
+
+def test_prepare_developer_message_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that developer message content is a plain string, not a list."""
+    client = OpenAIChatClient()
+
+    message = Message(role="developer", contents=[Content.from_text(text="Follow these rules.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "developer"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Follow these rules."
+
+
+def test_prepare_system_message_multiple_text_contents_joined(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that system messages with multiple text contents are joined into a single string."""
+    client = OpenAIChatClient()
+
+    message = Message(
+        role="system",
+        contents=[
+            Content.from_text(text="You are a helpful assistant."),
+            Content.from_text(text="Be concise."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "system"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "You are a helpful assistant.\nBe concise."
+
+
+def test_prepare_user_message_content_remains_list(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that user message content remains a list to support multimodal content."""
+    client = OpenAIChatClient()
+
+    message = Message(role="user", contents=[Content.from_text(text="Hello")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "user"
+    assert isinstance(prepared[0]["content"], list)
 
 
 def test_tool_choice_required_with_function_name(openai_unit_test_env: dict[str, str]) -> None:

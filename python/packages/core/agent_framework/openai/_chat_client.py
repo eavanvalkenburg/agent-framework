@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -16,7 +23,9 @@ from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+from openai.types.chat.chat_completion_message_custom_tool_call import (
+    ChatCompletionMessageCustomToolCall,
+)
 from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
@@ -532,6 +541,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
+        # System/developer messages must use plain string content because some
+        # OpenAI-compatible endpoints reject list content for non-user roles.
+        if message.role in ("system", "developer"):
+            texts = [content.text for content in message.contents if content.type == "text" and content.text]
+            if texts:
+                args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
+                if message.author_name:
+                    args["name"] = message.author_name
+                return [args]
+            return []
+
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
