@@ -131,8 +131,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -185,8 +183,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -245,8 +241,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -301,8 +295,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
