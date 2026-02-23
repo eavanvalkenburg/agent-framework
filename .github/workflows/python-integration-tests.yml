@@ -47,7 +47,7 @@ jobs:
         run: >
           uv run poe all-tests
           -m "not integration"
-          -n logical --dist loadfile --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
@@ -80,7 +80,7 @@ jobs:
           uv run pytest --import-mode=importlib
           packages/core/tests/openai
           -m integration
-          -n logical --dist loadfile --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
@@ -119,7 +119,7 @@ jobs:
           uv run pytest --import-mode=importlib
           packages/core/tests/azure
           -m integration
-          -n logical --dist loadfile --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
@@ -154,7 +154,7 @@ jobs:
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
           -m integration
-          -n logical --dist loadfile --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
@@ -203,7 +203,7 @@ jobs:
           packages/azurefunctions/tests/integration_tests
           packages/durabletask/tests/integration_tests
           -m integration
-          -n logical --dist loadfile --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
@@ -239,7 +239,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 15
-        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
 
   python-integration-tests-check:
     if: always()

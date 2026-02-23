@@ -256,7 +256,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
--n logical --dist loadfile --dist worksteal
+-n logical --dist worksteal
     packages/**/tests
 """
 
@@ -266,7 +266,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
--n logical --dist loadfile --dist worksteal
+-n logical --dist worksteal
     packages/**/tests
 """
 
