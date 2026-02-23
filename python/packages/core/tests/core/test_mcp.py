@@ -34,12 +34,8 @@ from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true" or os.getenv("LOCAL_MCP_URL", "") == "",
-    reason=(
-        "No LOCAL_MCP_URL provided; skipping integration tests."
-        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-        else "Integration tests are disabled."
-    ),
+    os.getenv("LOCAL_MCP_URL", "") == "",
+    reason="No LOCAL_MCP_URL provided; skipping integration tests.",
 )
 
 

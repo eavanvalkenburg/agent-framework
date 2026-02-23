@@ -29,11 +29,8 @@ from agent_framework_anthropic._chat_client import AnthropicSettings
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 skip_if_anthropic_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("ANTHROPIC_API_KEY", "") in ("", "test-api-key-12345"),
-    reason="No real ANTHROPIC_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("ANTHROPIC_API_KEY", "") in ("", "test-api-key-12345"),
+    reason="No real ANTHROPIC_API_KEY provided; skipping integration tests.",
 )
 
 

@@ -679,7 +679,7 @@ async def test_chat_completion() -> None:
 
 - `@pytest.mark.flaky` — marks the test as potentially flaky since it depends on external services
 - `@pytest.mark.integration` — enables selecting/excluding integration tests with `-m integration` / `-m "not integration"`
-- `@skip_if_..._integration_tests_disabled` — skips the test when `RUN_INTEGRATION_TESTS` is not set or API keys are missing
+- `@skip_if_..._integration_tests_disabled` — skips the test when required API keys or service endpoints are missing
 
 For test modules where all tests are integration tests, use `pytestmark`:
 

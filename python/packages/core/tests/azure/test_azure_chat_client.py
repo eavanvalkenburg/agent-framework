@@ -37,11 +37,8 @@ from agent_framework.openai import (
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
 
 

@@ -26,11 +26,8 @@ from agent_framework_ollama import OllamaChatClient
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
-    reason="No real Ollama chat model provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
+    reason="No real Ollama chat model provided; skipping integration tests.",
 )
 
 

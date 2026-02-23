@@ -24,7 +24,6 @@ permissions:
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
   UV_PYTHON: "3.13"
-  RUN_INTEGRATION_TESTS: "true"
 
 jobs:
   # Unit tests: all non-integration tests across all packages

@@ -9,7 +9,7 @@ description: >
 
 We strive for at least 85% test coverage across the codebase, with a focus on core packages and critical paths. Tests should be fast, reliable, and maintainable.
 When adding new code, check that the relevant sections of the codebase are covered by tests, and add new tests as needed. When modifying existing code, update or add tests to cover the changes.
-We run tests in two stages, for a PR each commit is tested with `RUN_INTEGRATION_TESTS=false` (unit tests only), and the full suite with `RUN_INTEGRATION_TESTS=true` is run when merging.
+We run tests in two stages, for a PR each commit is tested with unit tests only (using `-m "not integration"`), and the full suite including integration tests is run when merging.
 
 ## Running Tests
 
@@ -83,7 +83,7 @@ Integration tests require external services (OpenAI, Azure, etc.) and are contro
 
 1. **`@pytest.mark.flaky`** — marks the test as potentially flaky since it depends on external services
 2. **`@pytest.mark.integration`** — used for test selection, so integration tests can be included/excluded with `-m integration` / `-m "not integration"`
-3. **`@skip_if_..._integration_tests_disabled`** decorator — skips the test when `RUN_INTEGRATION_TESTS` is not `true` or the required API keys are missing
+3. **`@skip_if_..._integration_tests_disabled`** decorator — skips the test when the required API keys or service endpoints are missing
 
 ### Adding New Integration Tests
 

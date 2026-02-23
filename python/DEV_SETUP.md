@@ -121,9 +121,7 @@ client = OpenAIChatClient(env_file_path="openai.env")
 
 ## Tests
 
-All the tests are located in the `tests` folder of each package. There are tests that are marked with `@pytest.mark.integration` and `@skip_if_..._integration_tests_disabled` decorators — these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
-
-If you want to run these tests, you need to set the environment variable `RUN_INTEGRATION_TESTS` to `true` and have the appropriate key per services set in your environment or in a `.env` file.
+All the tests are located in the `tests` folder of each package. Tests marked with `@pytest.mark.integration` and `@skip_if_..._integration_tests_disabled` are integration tests that require external services (e.g., OpenAI, Azure OpenAI). They are automatically skipped when the required API keys or service endpoints are not configured in your environment or `.env` file.
 
 You can select or exclude integration tests using pytest markers:
 

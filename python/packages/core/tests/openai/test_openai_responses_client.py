@@ -40,11 +40,8 @@ from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 
