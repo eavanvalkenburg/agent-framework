@@ -56,12 +56,14 @@ def test_openai_construction_from_env(openai_unit_test_env: None) -> None:
     assert client.model_id == "text-embedding-3-small"
 
 
-def test_openai_construction_missing_api_key_raises() -> None:
+def test_openai_construction_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ValueError, match="API key is required"):
         OpenAIEmbeddingClient(model_id="text-embedding-3-small")
 
 
-def test_openai_construction_missing_model_raises() -> None:
+def test_openai_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL_ID", raising=False)
     with pytest.raises(ValueError, match="model ID is required"):
         OpenAIEmbeddingClient(api_key="test-key")
 
