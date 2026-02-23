@@ -543,10 +543,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if message.role in ("system", "developer"):
             texts = [content.text for content in message.contents if content.type == "text" and content.text]
             if texts:
-                args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
+                sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
                 if message.author_name:
-                    args["name"] = message.author_name
-                return [args]
+                    sys_args["name"] = message.author_name
+                return [sys_args]
             return []
 
         all_messages: list[dict[str, Any]] = []
@@ -590,9 +590,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
         # See https://github.com/microsoft/agent-framework/issues/4084
         for msg in all_messages:
-            content = msg.get("content")
-            if isinstance(content, list) and all(isinstance(c, dict) and c.get("type") == "text" for c in content):
-                msg["content"] = "\n".join(c.get("text", "") for c in content)
+            msg_content: Any = msg.get("content")
+            if isinstance(msg_content, list) and all(isinstance(c, dict) and c.get("type") == "text" for c in msg_content):
+                msg["content"] = "\n".join(c.get("text", "") for c in msg_content)
 
         return all_messages
 
