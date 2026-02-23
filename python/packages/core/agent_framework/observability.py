@@ -1322,7 +1322,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
             service_url=service_url,
         )
 
-        with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
+        with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
             start_time_stamp = perf_counter()
             try:
                 result = await super_get_embeddings(values, options=options)
