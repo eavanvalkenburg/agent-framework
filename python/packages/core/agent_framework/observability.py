@@ -38,10 +38,6 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
-# Defined here to avoid circular import with _types.py
-EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
-EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
-
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
@@ -87,6 +83,8 @@ __all__ = [
 ]
 
 
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
