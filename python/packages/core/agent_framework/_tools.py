@@ -1272,6 +1272,11 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       primary knob for controlling cost and preventing runaway tool usage. When
       the limit is reached, the loop stops invoking tools and forces the model
       to produce a text response. Default is ``None`` (unlimited).
+
+      This is a **best-effort** limit: it is checked *after* each batch of
+      parallel tool calls completes, not before. If the model requests 20
+      parallel calls in a single iteration and the limit is 10, all 20 will
+      execute before the loop stops.
     - ``max_consecutive_errors_per_request``: How many consecutive errors
       before abandoning the tool loop for this request.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
@@ -2159,6 +2164,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         max_function_calls is not None
                         and total_function_calls >= max_function_calls
                     ):
+                        # Best-effort limit: checked after each batch of parallel calls completes,
+                        # so the current batch always runs to completion even if it overshoots.
                         logger.info(
                             "Maximum function calls reached (%d/%d). "
                             "Stopping further function calls for this request.",
@@ -2295,6 +2302,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     max_function_calls is not None
                     and total_function_calls >= max_function_calls
                 ):
+                    # Best-effort limit: checked after each batch of parallel calls completes,
+                    # so the current batch always runs to completion even if it overshoots.
                     logger.info(
                         "Maximum function calls reached (%d/%d). "
                         "Stopping further function calls for this request.",
