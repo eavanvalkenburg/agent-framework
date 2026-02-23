@@ -260,6 +260,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
@@ -285,6 +286,7 @@ async def test_azure_assistants_client_get_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
@@ -306,6 +308,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
@@ -337,6 +340,7 @@ async def test_azure_assistants_client_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
@@ -364,6 +368,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
@@ -392,6 +397,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run():
     """Test Agent basic run functionality with AzureOpenAIAssistantsClient."""
@@ -409,6 +415,7 @@ async def test_azure_assistants_agent_basic_run():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run_streaming():
     """Test Agent basic streaming functionality with AzureOpenAIAssistantsClient."""
@@ -429,6 +436,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_session_persistence():
     """Test Agent session persistence across runs with AzureOpenAIAssistantsClient."""
@@ -458,6 +466,7 @@ async def test_azure_assistants_agent_session_persistence():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_existing_session_id():
     """Test Agent with existing session ID to continue conversations across agent instances."""
@@ -503,6 +512,7 @@ async def test_azure_assistants_agent_existing_session_id():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_code_interpreter():
     """Test Agent with code interpreter through AzureOpenAIAssistantsClient."""
@@ -523,6 +533,7 @@ async def test_azure_assistants_agent_code_interpreter():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""

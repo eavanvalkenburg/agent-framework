@@ -915,6 +915,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_basic_chat() -> None:
     """Integration test for basic chat completion."""
@@ -932,6 +933,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_streaming_chat() -> None:
     """Integration test for streaming chat completion."""
@@ -948,6 +950,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_function_calling() -> None:
     """Integration test for function calling."""
@@ -968,6 +971,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_hosted_tools() -> None:
     """Integration test for hosted tools."""
@@ -993,6 +997,7 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_with_system_message() -> None:
     """Integration test with system message."""
@@ -1010,6 +1015,7 @@ async def test_anthropic_client_integration_with_system_message() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_temperature_control() -> None:
     """Integration test with temperature control."""
@@ -1027,6 +1033,7 @@ async def test_anthropic_client_integration_temperature_control() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_ordering() -> None:
     """Integration test with ordering."""
@@ -1047,6 +1054,7 @@ async def test_anthropic_client_integration_ordering() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_images() -> None:
     """Integration test with images."""

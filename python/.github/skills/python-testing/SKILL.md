@@ -25,6 +25,12 @@ uv run poe all-tests
 
 # With coverage
 uv run poe all-tests-cov
+
+# Run only unit tests (exclude integration tests)
+uv run poe all-tests -m "not integration"
+
+# Run only integration tests
+uv run poe all-tests -m integration
 ```
 
 ## Test Configuration
@@ -32,6 +38,7 @@ uv run poe all-tests-cov
 - **Async mode**: `asyncio_mode = "auto"` is enabled — do NOT use `@pytest.mark.asyncio`, but do mark tests with `async def` and use `await` for async calls
 - **Timeout**: Default 60 seconds per test
 - **Import mode**: `importlib` for cross-package isolation
+- **Parallelization**: Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` (`-n auto --dist worksteal`) in their `poe test` task. The `all-tests` task also uses xdist across all packages.
 
 ## Test Directory Structure
 
@@ -72,9 +79,59 @@ packages/core/
 
 ## Integration Tests
 
-Tests marked with `@skip_if_..._integration_tests_disabled` require:
-- `RUN_INTEGRATION_TESTS=true` environment variable
-- Appropriate API keys in environment or `.env` file
+Integration tests require external services (OpenAI, Azure, etc.) and are controlled by three markers:
+
+1. **`@pytest.mark.flaky`** — marks the test as potentially flaky since it depends on external services
+2. **`@pytest.mark.integration`** — used for test selection, so integration tests can be included/excluded with `-m integration` / `-m "not integration"`
+3. **`@skip_if_..._integration_tests_disabled`** decorator — skips the test when `RUN_INTEGRATION_TESTS` is not `true` or the required API keys are missing
+
+### Adding New Integration Tests
+
+All three markers must be applied to every new integration test:
+
+```python
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_openai_chat_completion() -> None:
+    ...
+```
+
+For test files where all tests are integration tests (e.g., Azure Functions, Durable Task), use the module-level `pytestmark` list:
+
+```python
+pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
+    pytest.mark.sample("01_single_agent"),
+    pytest.mark.usefixtures("function_app_for_test"),
+]
+```
+
+### CI Workflow
+
+The merge CI workflow (`python-merge-tests.yml`) splits integration tests into parallel jobs by provider with change-based detection:
+
+- **Unit tests** — always run all non-integration tests
+- **OpenAI integration** — runs when `packages/core/agent_framework/openai/` or core infrastructure changes
+- **Azure OpenAI integration** — runs when `packages/core/agent_framework/azure/` or core changes
+- **Misc integration** — Anthropic, Ollama, MCP tests; runs when their packages or core change
+- **Functions integration** — Azure Functions + Durable Task; runs when their packages or core change
+- **Azure AI integration** — runs when `packages/azure-ai/` or core changes
+
+Core infrastructure changes (e.g., `_agents.py`, `_types.py`) trigger all integration test jobs. Scheduled and manual runs always execute all jobs.
+
+### Updating the CI When Adding Integration Tests for a New Provider
+
+When adding integration tests for a new provider package, you must update **two things** in `python-merge-tests.yml`:
+
+1. **Add a path filter** for the new provider in the `paths-filter` job so the CI knows which file changes should trigger those tests.
+2. **Assign the tests to a CI job** — either add them to the existing `python-tests-misc-integration` job, or create a dedicated job if the provider:
+   - Has a large number of integration tests
+   - Requires special infrastructure setup (emulators, Docker containers, etc.)
+   - Has long-running tests that would slow down the misc job
+
+The `python-tests-misc-integration` job is intended for small integration test suites that don't need dedicated infrastructure. When a provider's integration tests grow large or gain special requirements, split them out into their own job (like `python-tests-functions` was split out for Azure Functions + Durable Task).
 
 ## Best Practices
 

@@ -254,6 +254,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -392,6 +393,7 @@ async def test_integration_options(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -440,6 +442,7 @@ async def test_integration_web_search() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
@@ -469,6 +472,7 @@ async def test_integration_client_file_search() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
@@ -500,6 +504,7 @@ async def test_integration_client_file_search_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
@@ -524,6 +529,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with code interpreter tool."""
@@ -543,6 +549,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_existing_session():
     """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""

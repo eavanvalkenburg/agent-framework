@@ -698,6 +698,7 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_provider_create_and_get_agent_integration() -> None:
     """Integration test for provider create_agent and get_agent."""

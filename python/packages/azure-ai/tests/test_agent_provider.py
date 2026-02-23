@@ -779,6 +779,8 @@ def test_from_azure_ai_agent_tools_unknown_dict() -> None:
 # region Integration Tests
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_agent() -> None:
     """Integration test: Create an agent using the provider."""
@@ -801,6 +803,8 @@ async def test_integration_create_agent() -> None:
                 await provider._agents_client.delete_agent(agent.id)  # type: ignore
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_get_agent() -> None:
     """Integration test: Get an existing agent using the provider."""
@@ -825,6 +829,8 @@ async def test_integration_get_agent() -> None:
             await provider._agents_client.delete_agent(created.id)  # type: ignore
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_and_run() -> None:
     """Integration test: Create an agent and run a conversation."""

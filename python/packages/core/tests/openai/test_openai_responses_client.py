@@ -2362,6 +2362,7 @@ def test_with_callable_api_key() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -2500,6 +2501,7 @@ async def test_integration_options(
 
 @pytest.mark.timeout(300)
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = OpenAIResponsesClient(model_id="gpt-5")
@@ -2553,6 +2555,7 @@ async def test_integration_web_search() -> None:
     "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -2586,6 +2589,7 @@ async def test_integration_file_search() -> None:
     "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()

@@ -763,6 +763,8 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 class TestOpenAIAssistantProviderIntegration:
     """Integration tests requiring real OpenAI API."""

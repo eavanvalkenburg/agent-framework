@@ -470,6 +470,8 @@ async def test_cmc_with_invalid_content_type(
         await ollama_client.get_response(messages=chat_history)
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_tool_call(
     chat_history: list[Message],
@@ -485,6 +487,8 @@ async def test_cmc_integration_with_tool_call(
     assert tool_result.result == "Hello World"
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_chat_completion(
     chat_history: list[Message],
@@ -497,6 +501,8 @@ async def test_cmc_integration_with_chat_completion(
     assert "hello" in result.text.lower()
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_tool_call(
     chat_history: list[Message],
@@ -522,6 +528,8 @@ async def test_cmc_streaming_integration_with_tool_call(
                 assert tool_call.name == "hello_world"
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_chat_completion(
     chat_history: list[Message],

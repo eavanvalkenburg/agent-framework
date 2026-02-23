@@ -1087,6 +1087,7 @@ class OutputStruct(BaseModel):
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -1225,6 +1226,7 @@ async def test_integration_options(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-search-preview")

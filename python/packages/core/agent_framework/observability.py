@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.semconv_ai import Meters, SpanAttributes
+from opentelemetry.semconv_ai import Meters
 
 from . import __version__ as version_info
 from ._settings import load_settings
@@ -1826,9 +1826,7 @@ def _capture_response(
     span.set_attributes(attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
-        token_usage_histogram.record(
-            input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT}
-        )
+        token_usage_histogram.record(input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT})
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
         token_usage_histogram.record(output_tokens, {**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_OUTPUT})
     if operation_duration_histogram and duration is not None:
