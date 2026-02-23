@@ -262,8 +262,8 @@ class FunctionTool(SerializationMixin):
                     applications, the counter accumulates across all requests. Use
                     :attr:`invocation_count` to inspect or reset the counter manually,
                     or consider using
-                    :attr:`FunctionInvocationConfiguration.max_function_calls
-                    <FunctionInvocationConfiguration>` for per-request limits instead.
+                    ``FunctionInvocationConfiguration["max_function_calls"]``
+                    for per-request limits instead.
 
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
                 If None, there is no limit. Should be at least 1.

@@ -32,7 +32,8 @@ executed during an agent run.  There are three complementary mechanisms:
 
 Choose the right mechanism for your scenario:
 • Prevent runaway LLM loops  →  ``max_iterations``
-• Hard cap on tool execution cost per request  →  ``max_function_calls``
+• Best-effort cap on tool execution cost per request  →  ``max_function_calls``
+  (checked between iterations; a single batch of parallel calls may overshoot)
 • Limit a specific expensive tool globally  →  ``max_invocations``
 • Per-agent limits on shared tools  →  wrap the callable separately per agent
 """
