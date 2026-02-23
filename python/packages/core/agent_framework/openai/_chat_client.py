@@ -404,21 +404,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     ) -> ChatResponseUpdate:
         """Parse a streaming response update from OpenAI."""
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-        if chunk.usage:
-            return ChatResponseUpdate(
-                role="assistant",
-                contents=[
-                    Content.from_usage(
-                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
-                    )
-                ],
-                model_id=chunk.model,
-                additional_properties=chunk_metadata,
-                response_id=chunk.id,
-                message_id=chunk.id,
-            )
         contents: list[Content] = []
         finish_reason: FinishReason | None = None
+
+        # Process usage data (may coexist with text/tool content in providers like Gemini).
+        # See https://github.com/microsoft/agent-framework/issues/3434
+        if chunk.usage:
+            contents.append(
+                Content.from_usage(
+                    usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
+                )
+            )
+
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))

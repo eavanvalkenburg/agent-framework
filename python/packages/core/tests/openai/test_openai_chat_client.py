@@ -728,6 +728,43 @@ def test_usage_content_in_streaming_response(openai_unit_test_env: dict[str, str
     assert usage_content.usage_details["total_token_count"] == 150
 
 
+def test_streaming_chunk_with_usage_and_text(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text content is not lost when usage data is in the same chunk.
+
+    Some providers (e.g. Gemini) include both usage and text content in the
+    same streaming chunk. See https://github.com/microsoft/agent-framework/issues/3434
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+    from openai.types.completion_usage import CompletionUsage
+
+    client = OpenAIChatClient()
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gemini-2.0-flash-lite",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(content="Hello world", role="assistant"),
+                finish_reason=None,
+            )
+        ],
+        usage=CompletionUsage(prompt_tokens=18, completion_tokens=5, total_tokens=23),
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    # Should have BOTH text and usage content
+    content_types = [c.type for c in update.contents]
+    assert "text" in content_types, "Text content should not be lost when usage is present"
+    assert "usage" in content_types, "Usage content should still be present"
+
+    text_content = next(c for c in update.contents if c.type == "text")
+    assert text_content.text == "Hello world"
+
+
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     """Test that refusal content is parsed correctly."""
     from openai.types.chat.chat_completion import ChatCompletion, Choice
