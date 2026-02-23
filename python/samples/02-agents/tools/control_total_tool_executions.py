@@ -25,10 +25,16 @@ executed during an agent run.  There are three complementary mechanisms:
    of a specific tool instance.  The counter is never automatically reset,
    so it accumulates across requests when tools are singletons.
 
+   Because ``max_invocations`` is tracked on the ``FunctionTool`` *instance*,
+   wrapping the same callable with ``@tool`` multiple times creates independent
+   counters.  This lets you give different agents different invocation budgets
+   for the same underlying function.
+
 Choose the right mechanism for your scenario:
 • Prevent runaway LLM loops  →  ``max_iterations``
 • Hard cap on tool execution cost per request  →  ``max_function_calls``
 • Limit a specific expensive tool globally  →  ``max_invocations``
+• Per-agent limits on shared tools  →  wrap the callable separately per agent
 """
 
 
@@ -176,13 +182,68 @@ async def scenario_max_invocations():
     print()
 
 
-# --- Scenario 4: Combining all three mechanisms ---
+# --- Scenario 4: Per-agent limits via separate tool wrappers ---
+
+
+async def scenario_per_agent_tool_limits():
+    """Demonstrate per-agent max_invocations using separate tool wrappers.
+
+    Because max_invocations is tracked on the FunctionTool *instance*, you can
+    wrap the same callable with ``@tool`` multiple times to get independent
+    counters for different agents.  This is useful when two agents share the
+    same underlying function but should have different invocation budgets.
+    """
+    print("=" * 60)
+    print("Scenario 4: Per-agent limits via separate tool wrappers")
+    print("=" * 60)
+
+    # The underlying callable — a plain function, no decorator.
+    def _do_lookup(query: Annotated[str, "Search query."]) -> str:
+        """Look up information."""
+        return f"Lookup result for '{query}'"
+
+    # Wrap it twice with different limits. Each wrapper is a separate
+    # FunctionTool instance with its own invocation_count.
+    agent_a_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=2)(_do_lookup)
+    agent_b_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=5)(_do_lookup)
+
+    client = OpenAIResponsesClient()
+    agent_a = client.as_agent(
+        name="AgentA",
+        instructions="Use the lookup tool to answer questions.",
+        tools=[agent_a_lookup],
+    )
+    agent_b = client.as_agent(
+        name="AgentB",
+        instructions="Use the lookup tool to answer questions.",
+        tools=[agent_b_lookup],
+    )
+
+    print(f"  agent_a_lookup.max_invocations = {agent_a_lookup.max_invocations}")
+    print(f"  agent_b_lookup.max_invocations = {agent_b_lookup.max_invocations}")
+
+    # Agent A uses its budget
+    session_a = agent_a.create_session()
+    await agent_a.run("Look up AI trends", session=session_a)
+    await agent_a.run("Look up cloud trends", session=session_a)
+
+    # Agent B's counter is independent — still at 0
+    session_b = agent_b.create_session()
+    await agent_b.run("Look up quantum computing", session=session_b)
+
+    print(f"  agent_a_lookup.invocation_count = {agent_a_lookup.invocation_count}  (limit {agent_a_lookup.max_invocations})")
+    print(f"  agent_b_lookup.invocation_count = {agent_b_lookup.invocation_count}  (limit {agent_b_lookup.max_invocations})")
+    print("  → Agent A hit its limit; Agent B used 1 of 5.")
+    print()
+
+
+# --- Scenario 5: Combining all three mechanisms ---
 
 
 async def scenario_combined():
     """Demonstrate using all three mechanisms together for defense in depth."""
     print("=" * 60)
-    print("Scenario 4: Combined — all mechanisms together")
+    print("Scenario 5: Combined — all mechanisms together")
     print("=" * 60)
 
     client = OpenAIResponsesClient()
@@ -224,6 +285,7 @@ async def main():
     await scenario_max_iterations()
     await scenario_max_function_calls()
     await scenario_max_invocations()
+    await scenario_per_agent_tool_limits()
     await scenario_combined()
 
 
@@ -256,7 +318,16 @@ Scenario 3: max_invocations — lifetime cap on a tool
   invocation_count = 0
 
 ============================================================
-Scenario 4: Combined — all mechanisms together
+Scenario 4: Per-agent limits via separate tool wrappers
+============================================================
+  agent_a_lookup.max_invocations = 2
+  agent_b_lookup.max_invocations = 5
+  agent_a_lookup.invocation_count = 2  (limit 2)
+  agent_b_lookup.invocation_count = 1  (limit 5)
+  → Agent A hit its limit; Agent B used 1 of 5.
+
+============================================================
+Scenario 5: Combined — all mechanisms together
 ============================================================
   max_iterations     = 5
   max_function_calls = 8
