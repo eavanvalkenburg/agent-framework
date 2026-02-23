@@ -588,6 +588,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
             if "content" in args or "tool_calls" in args:
                 all_messages.append(args)
+
+        # Flatten text-only content lists to plain strings for broader
+        # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
+        # See https://github.com/microsoft/agent-framework/issues/4084
+        for msg in all_messages:
+            content = msg.get("content")
+            if isinstance(content, list) and all(isinstance(c, dict) and c.get("type") == "text" for c in content):
+                msg["content"] = "\n".join(c.get("text", "") for c in content)
+
         return all_messages
 
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:

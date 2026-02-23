@@ -642,9 +642,8 @@ def test_prepare_message_with_text_reasoning_content(openai_unit_test_env: dict[
     assert len(prepared) == 1
     assert "reasoning_details" in prepared[0]
     assert prepared[0]["reasoning_details"] == mock_reasoning_data
-    # Should also have the text content
-    assert prepared[0]["content"][0]["type"] == "text"
-    assert prepared[0]["content"][0]["text"] == "The answer is 42."
+    # Should also have the text content (flattened to string for text-only)
+    assert prepared[0]["content"] == "The answer is 42."
 
 
 def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_env: dict[str, str]) -> None:
@@ -690,8 +689,7 @@ def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_en
     )
     prepared_mixed = client._prepare_message_for_openai(mixed_message)
     assert len(prepared_mixed) == 1  # Only text content should remain
-    assert prepared_mixed[0]["content"][0]["type"] == "text"
-    assert prepared_mixed[0]["content"][0]["text"] == "I need approval for this action."
+    assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
 def test_usage_content_in_streaming_response(openai_unit_test_env: dict[str, str]) -> None:
@@ -903,8 +901,12 @@ def test_prepare_system_message_multiple_text_contents_joined(openai_unit_test_e
     assert prepared[0]["content"] == "You are a helpful assistant.\nBe concise."
 
 
-def test_prepare_user_message_content_remains_list(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that user message content remains a list to support multimodal content."""
+def test_prepare_user_message_text_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text-only user message content is flattened to a plain string.
+
+    Some OpenAI-compatible endpoints (e.g. Foundry Local) cannot deserialize
+    the list format. See https://github.com/microsoft/agent-framework/issues/4084
+    """
     client = OpenAIChatClient()
 
     message = Message(role="user", contents=[Content.from_text(text="Hello")])
@@ -913,7 +915,41 @@ def test_prepare_user_message_content_remains_list(openai_unit_test_env: dict[st
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "user"
-    assert isinstance(prepared[0]["content"], list)
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Hello"
+
+
+def test_prepare_user_message_multimodal_content_remains_list(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that multimodal user message content remains a list."""
+    client = OpenAIChatClient()
+
+    message = Message(
+        role="user",
+        contents=[
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Multimodal content must stay as list for the API
+    has_list_content = any(isinstance(m.get("content"), list) for m in prepared)
+    assert has_list_content
+
+
+def test_prepare_assistant_message_text_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text-only assistant message content is flattened to a plain string."""
+    client = OpenAIChatClient()
+
+    message = Message(role="assistant", contents=[Content.from_text(text="Sure, I can help.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Sure, I can help."
 
 
 def test_tool_choice_required_with_function_name(openai_unit_test_env: dict[str, str]) -> None:
