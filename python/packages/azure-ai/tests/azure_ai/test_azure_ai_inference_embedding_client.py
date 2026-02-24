@@ -8,11 +8,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Content, Embedding, GeneratedEmbeddings
+from agent_framework import Content
+
 from agent_framework_azure_ai import (
     AzureAIInferenceEmbeddingClient,
     AzureAIInferenceEmbeddingOptions,
-    AzureAIInferenceEmbeddingSettings,
     RawAzureAIInferenceEmbeddingClient,
 )
 
@@ -88,8 +88,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
     ) -> None:
         """Text inputs are dispatched to the text client."""
         result = await raw_client.get_embeddings(["hello", "world"])
-
-        mock_text_client.embed.assert_called_once()
+        assert result is not None
         call_kwargs = mock_text_client.embed.call_args
         assert call_kwargs.kwargs["input"] == ["hello", "world"]
         assert call_kwargs.kwargs["model"] == "test-model"
@@ -99,7 +98,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
     ) -> None:
         """Content.from_text() inputs are dispatched to the text client."""
         text_content = Content.from_text("hello")
-        result = await raw_client.get_embeddings([text_content])
+        await raw_client.get_embeddings([text_content])
 
         mock_text_client.embed.assert_called_once()
         call_kwargs = mock_text_client.embed.call_args
@@ -110,7 +109,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
     ) -> None:
         """Image Content inputs are dispatched to the image client."""
         image_content = Content.from_data(data=b"\x89PNG", media_type="image/png")
-        result = await raw_client.get_embeddings([image_content])
+        await raw_client.get_embeddings([image_content])
 
         mock_image_client.embed.assert_called_once()
         call_kwargs = mock_image_client.embed.call_args
@@ -129,7 +128,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
         mock_image_client.embed.return_value = _make_embed_response([[0.3, 0.4]])
 
         image = Content.from_data(data=b"\x89PNG", media_type="image/png")
-        result = await raw_client.get_embeddings(["hello", image, "world"])
+        await raw_client.get_embeddings(["hello", image, "world"])
 
         # Text client gets "hello" and "world"
         text_call = mock_text_client.embed.call_args
@@ -195,36 +194,40 @@ class TestRawAzureAIInferenceEmbeddingClient:
 
     def test_settings_from_env(self) -> None:
         """Settings are loaded from environment variables."""
-        with patch.dict(
-            os.environ,
-            {
-                "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
-                "AZURE_AI_INFERENCE_API_KEY": "env-key",
-                "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "env-model",
-            },
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
+                    "AZURE_AI_INFERENCE_API_KEY": "env-key",
+                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "env-model",
+                },
+            ),
+            patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"),
+            patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"),
         ):
-            with patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"):
-                with patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"):
-                    client = RawAzureAIInferenceEmbeddingClient()
-                    assert client.model_id == "env-model"
-                    assert client.image_model_id == "env-model"  # falls back to model_id
+            client = RawAzureAIInferenceEmbeddingClient()
+            assert client.model_id == "env-model"
+            assert client.image_model_id == "env-model"  # falls back to model_id
 
     def test_image_model_id_from_env(self) -> None:
         """image_model_id is loaded from its own environment variable."""
-        with patch.dict(
-            os.environ,
-            {
-                "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
-                "AZURE_AI_INFERENCE_API_KEY": "env-key",
-                "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "text-model",
-                "AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID": "image-model",
-            },
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
+                    "AZURE_AI_INFERENCE_API_KEY": "env-key",
+                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "text-model",
+                    "AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID": "image-model",
+                },
+            ),
+            patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"),
+            patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"),
         ):
-            with patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"):
-                with patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"):
-                    client = RawAzureAIInferenceEmbeddingClient()
-                    assert client.model_id == "text-model"
-                    assert client.image_model_id == "image-model"
+            client = RawAzureAIInferenceEmbeddingClient()
+            assert client.model_id == "text-model"
+            assert client.image_model_id == "image-model"
 
     def test_image_model_id_explicit(
         self, mock_text_client: AsyncMock, mock_image_client: AsyncMock

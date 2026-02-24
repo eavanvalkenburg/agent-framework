@@ -283,10 +283,10 @@ class RawAzureAIInferenceEmbeddingClient(
             )
             for i, item in enumerate(response.data):
                 original_idx = image_items[i][0]
-                vector: list[float] = [float(v) for v in item.embedding]
+                img_vector: list[float] = [float(v) for v in item.embedding]
                 results[original_idx] = Embedding(
-                    vector=vector,
-                    dimensions=len(vector),
+                    vector=img_vector,
+                    dimensions=len(img_vector),
                     model_id=response.model or image_model,
                 )
             if response.usage:
