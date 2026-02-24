@@ -167,7 +167,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 
 #### 1.4 — Tests and samples
 - Unit tests for types, protocol, base class, OpenAI client, Azure OpenAI client
-- Integration tests for OpenAI and Azure OpenAI (gated behind `RUN_INTEGRATION_TESTS` + credentials, `@pytest.mark.flaky`)
+- Integration tests for OpenAI and Azure OpenAI (gated behind credentials check, `@pytest.mark.flaky`)
 - Samples in `samples/02-agents/embeddings/` — `openai_embeddings.py`, `azure_openai_embeddings.py`
 
 ---
