@@ -143,6 +143,7 @@ class OpenAIEmbeddingClient(
         default_headers: Additional HTTP headers.
         async_client: Pre-configured AsyncOpenAI client.
         base_url: Custom API base URL.
+        otel_provider_name: Override the OpenTelemetry provider name for telemetry.
         env_file_path: Path to .env file for settings.
         env_file_encoding: Encoding for .env file.
 
@@ -176,6 +177,7 @@ class OpenAIEmbeddingClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         base_url: str | None = None,
+        otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -208,4 +210,5 @@ class OpenAIEmbeddingClient(
             org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
+            otel_provider_name=otel_provider_name,
         )
