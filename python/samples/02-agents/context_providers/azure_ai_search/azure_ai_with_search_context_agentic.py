@@ -82,8 +82,8 @@ async def main() -> None:
             mode="agentic",
             knowledge_base_name=knowledge_base_name,
             # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            knowledge_base_output_mode="answer_synthesis",  # or "answer_synthesis"
+            retrieval_reasoning_effort="medium",  # or "medium", "low"
         )
     else:
         # Auto-create Knowledge Base from index
@@ -135,6 +135,9 @@ async def main() -> None:
             async for chunk in agent.run(user_input, stream=True):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
+                for content in chunk.contents:
+                    if content.annotations:
+                        print(f"\n[Sources: {content.annotations}]", end="", flush=True)
 
             print("\n")
 
