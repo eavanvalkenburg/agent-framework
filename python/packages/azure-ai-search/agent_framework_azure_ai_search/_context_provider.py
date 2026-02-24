@@ -455,7 +455,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
                 vector_queries = [VectorizableTextQuery(text=query, k=vector_k, fields=self.vector_field_name)]
             elif self.embedding_function:
                 if isinstance(self.embedding_function, SupportsGetEmbeddings):
-                    embeddings = await self.embedding_function.get_embeddings(query)  # type: ignore[reportUnknownVariableType]
+                    embeddings = await self.embedding_function.get_embeddings([query])  # type: ignore[reportUnknownVariableType]
                     query_vector: list[float] = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
                 else:
                     query_vector = await self.embedding_function(query)
