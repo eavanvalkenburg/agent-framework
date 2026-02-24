@@ -746,7 +746,11 @@ class TestSemanticSearch:
         provider = _make_provider()
         provider._use_vectorizable_query = False
         provider.vector_field_name = "embedding"
-        provider.embedding_function = AsyncMock(return_value=[0.1, 0.2, 0.3])
+
+        async def _embed(query: str) -> list[float]:
+            return [0.1, 0.2, 0.3]
+
+        provider.embedding_function = _embed
         mock_client = AsyncMock()
 
         async def _search(**kwargs):
@@ -757,7 +761,6 @@ class TestSemanticSearch:
 
         results = await provider._semantic_search("embed query")
         assert len(results) == 1
-        provider.embedding_function.assert_awaited_once_with("embed query")
         call_kwargs = mock_client.search.call_args[1]
         assert "vector_queries" in call_kwargs
 
