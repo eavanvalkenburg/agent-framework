@@ -250,7 +250,7 @@ class RawAzureAIInferenceEmbeddingClient(
 
         # Allocate results array.
         embeddings: list[Embedding[list[float]] | None] = [None] * len(values)
-        usage_details: UsageDetails = {"input_token_count": 0, "output_token_count": 0}
+        usage_details: UsageDetails = {}
 
         # Embed text inputs.
         if text_items:
@@ -264,14 +264,19 @@ class RawAzureAIInferenceEmbeddingClient(
             )
             for i, item in enumerate(response.data):
                 original_idx = text_items[i][0]
+                vector: list[float] = [float(v) for v in item.embedding]
                 embeddings[original_idx] = Embedding(
-                    vector=item.embedding,
-                    dimensions=len(item.embedding),
+                    vector=vector,
+                    dimensions=len(vector),
                     model_id=response.model or text_model,
                 )
             if response.usage:
-                usage_details["input_token_count"] += response.usage.prompt_tokens
-                usage_details["output_token_count"] += getattr(response.usage, "completion_tokens", 0) or 0
+                usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
+                    response.usage.prompt_tokens or 0
+                )
+                usage_details["output_token_count"] = (usage_details.get("output_token_count") or 0) + (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
 
         # Embed image inputs.
         if image_items:
@@ -285,16 +290,24 @@ class RawAzureAIInferenceEmbeddingClient(
             )
             for i, item in enumerate(response.data):
                 original_idx = image_items[i][0]
+                image_vector: list[float] = [float(v) for v in item.embedding]
                 embeddings[original_idx] = Embedding(
-                    vector=item.embedding,
-                    dimensions=len(item.embedding),
+                    vector=image_vector,
+                    dimensions=len(image_vector),
                     model_id=response.model or image_model,
                 )
             if response.usage:
-                usage_details["input_token_count"] += response.usage.prompt_tokens
-                usage_details["output_token_count"] += getattr(response.usage, "completion_tokens", 0) or 0
-
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_details)  # type: ignore[reportReturnType]
+                usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
+                    response.usage.prompt_tokens or 0
+                )
+                usage_details["output_token_count"] = (usage_details.get("output_token_count") or 0) + (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
+        return GeneratedEmbeddings(
+            [embedding for embedding in embeddings if embedding is not None],
+            options=options,
+            usage=usage_details,
+        )  # type: ignore[reportReturnType]
 
 
 class AzureAIInferenceEmbeddingClient(
