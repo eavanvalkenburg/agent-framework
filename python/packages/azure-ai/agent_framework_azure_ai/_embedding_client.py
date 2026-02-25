@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
@@ -13,8 +14,9 @@ from agent_framework import (
     Embedding,
     EmbeddingGenerationOptions,
     GeneratedEmbeddings,
+    UsageDetails,
+    load_settings,
 )
-from agent_framework._settings import load_settings
 from agent_framework.observability import EmbeddingTelemetryLayer
 from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
@@ -162,8 +164,10 @@ class RawAzureAIInferenceEmbeddingClient(
 
     async def close(self) -> None:
         """Close the underlying SDK clients and release resources."""
-        await self._text_client.close()
-        await self._image_client.close()
+        with suppress(Exception):
+            await self._text_client.close()
+        with suppress(Exception):
+            await self._image_client.close()
 
     async def __aenter__(self) -> RawAzureAIInferenceEmbeddingClient[AzureAIInferenceEmbeddingOptionsT]:
         """Enter the async context manager."""
@@ -204,10 +208,6 @@ class RawAzureAIInferenceEmbeddingClient(
             return GeneratedEmbeddings([], options=options)  # type: ignore[reportReturnType]
 
         opts: dict[str, Any] = dict(options) if options else {}
-        text_model = opts.get("model_id") or self.model_id
-        image_model = opts.get("image_model_id") or self.image_model_id
-        if not text_model:
-            raise ValueError("model_id is required")
 
         # Separate text and image inputs, tracking original indices.
         text_items: list[tuple[int, str]] = []
@@ -249,12 +249,13 @@ class RawAzureAIInferenceEmbeddingClient(
             common_kwargs["model_extras"] = extra_parameters
 
         # Allocate results array.
-        results: list[Embedding[list[float]] | None] = [None] * len(values)
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+        embeddings: list[Embedding[list[float]] | None] = [None] * len(values)
+        usage_details: UsageDetails = {"input_token_count": 0, "output_token_count": 0}
 
         # Embed text inputs.
         if text_items:
+            if not (text_model := opts.get("model_id") or self.model_id):
+                raise ValueError("An model_id is required, either in the client or options, for text inputs.")
             text_inputs = [t for _, t in text_items]
             response = await self._text_client.embed(
                 input=text_inputs,
@@ -263,18 +264,19 @@ class RawAzureAIInferenceEmbeddingClient(
             )
             for i, item in enumerate(response.data):
                 original_idx = text_items[i][0]
-                vector: list[float] = [float(v) for v in item.embedding]
-                results[original_idx] = Embedding(
-                    vector=vector,
-                    dimensions=len(vector),
+                embeddings[original_idx] = Embedding(
+                    vector=item.embedding,
+                    dimensions=len(item.embedding),
                     model_id=response.model or text_model,
                 )
             if response.usage:
-                total_prompt_tokens += response.usage.prompt_tokens
-                total_completion_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                usage_details["input_token_count"] += response.usage.prompt_tokens
+                usage_details["output_token_count"] += getattr(response.usage, "completion_tokens", 0) or 0
 
         # Embed image inputs.
         if image_items:
+            if not (image_model := opts.get("image_model_id") or self.image_model_id):
+                raise ValueError("An image_model_id is required, either in the client or options, for image inputs.")
             image_inputs = [img for _, img in image_items]
             response = await self._image_client.embed(
                 input=image_inputs,
@@ -283,25 +285,16 @@ class RawAzureAIInferenceEmbeddingClient(
             )
             for i, item in enumerate(response.data):
                 original_idx = image_items[i][0]
-                img_vector: list[float] = [float(v) for v in item.embedding]
-                results[original_idx] = Embedding(
-                    vector=img_vector,
-                    dimensions=len(img_vector),
+                embeddings[original_idx] = Embedding(
+                    vector=item.embedding,
+                    dimensions=len(item.embedding),
                     model_id=response.model or image_model,
                 )
             if response.usage:
-                total_prompt_tokens += response.usage.prompt_tokens
-                total_completion_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                usage_details["input_token_count"] += response.usage.prompt_tokens
+                usage_details["output_token_count"] += getattr(response.usage, "completion_tokens", 0) or 0
 
-        embeddings = [r for r in results if r is not None]
-
-        usage_dict: dict[str, Any] | None = None
-        if total_prompt_tokens > 0 or total_completion_tokens > 0:
-            usage_dict = {"prompt_tokens": total_prompt_tokens}
-            if total_completion_tokens > 0:
-                usage_dict["completion_tokens"] = total_completion_tokens
-
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)  # type: ignore[reportReturnType]
+        return GeneratedEmbeddings(embeddings, options=options, usage=usage_details)  # type: ignore[reportReturnType]
 
 
 class AzureAIInferenceEmbeddingClient(

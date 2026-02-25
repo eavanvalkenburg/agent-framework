@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 
 from .._clients import BaseEmbeddingClient
 from .._settings import load_settings
-from .._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings
+from .._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from ..observability import EmbeddingTelemetryLayer
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -116,11 +116,11 @@ class RawOpenAIEmbeddingClient(
                 )
             )
 
-        usage_dict: dict[str, Any] | None = None
+        usage_dict: UsageDetails | None = None
         if response.usage:
             usage_dict = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "total_tokens": response.usage.total_tokens,
+                "input_token_count": response.usage.prompt_tokens,
+                "total_token_count": response.usage.total_tokens,
             }
 
         return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)

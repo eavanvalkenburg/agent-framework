@@ -26,12 +26,10 @@ class _StubBedrockEmbeddingRuntime:
         dimensions = body.get("dimensions", 3)
         return {
             "body": MagicMock(
-                read=lambda: json.dumps(
-                    {
-                        "embedding": [0.1 * (i + 1) for i in range(dimensions)],
-                        "inputTextTokenCount": 5,
-                    }
-                ).encode()
+                read=lambda: json.dumps({
+                    "embedding": [0.1 * (i + 1) for i in range(dimensions)],
+                    "inputTextTokenCount": 5,
+                }).encode()
             ),
         }
 
@@ -73,14 +71,12 @@ async def test_bedrock_embedding_get_embeddings() -> None:
     assert len(result[0].vector) == 3
     assert len(result[1].vector) == 3
     assert result[0].model_id == "amazon.titan-embed-text-v2:0"
-    assert result.usage == {"prompt_tokens": 10}
+    assert result.usage == {"input_token_count": 10}
 
     # Two calls since Titan processes one input at a time
     assert len(stub.calls) == 2
-    body0 = json.loads(stub.calls[0]["body"])
-    assert body0["inputText"] == "hello"
-    body1 = json.loads(stub.calls[1]["body"])
-    assert body1["inputText"] == "world"
+    call_texts = {json.loads(call["body"])["inputText"] for call in stub.calls}
+    assert call_texts == {"hello", "world"}
 
 
 async def test_bedrock_embedding_get_embeddings_empty_input() -> None:

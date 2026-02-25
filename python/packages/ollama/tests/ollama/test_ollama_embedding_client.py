@@ -62,7 +62,7 @@ async def test_ollama_embedding_get_embeddings() -> None:
         assert result[0].vector == [0.1, 0.2, 0.3]
         assert result[1].vector == [0.4, 0.5, 0.6]
         assert result[0].model_id == "nomic-embed-text"
-        assert result.usage == {"prompt_tokens": 10}
+        assert result.usage == {"input_token_count": 10}
 
         mock_client.embed.assert_called_once_with(
             model="nomic-embed-text",

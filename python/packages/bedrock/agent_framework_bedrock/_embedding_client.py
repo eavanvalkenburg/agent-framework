@@ -15,8 +15,10 @@ from agent_framework import (
     Embedding,
     EmbeddingGenerationOptions,
     GeneratedEmbeddings,
+    SecretString,
+    UsageDetails,
+    load_settings,
 )
-from agent_framework._settings import SecretString, load_settings
 from agent_framework.observability import EmbeddingTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
@@ -29,8 +31,17 @@ else:
 
 
 logger = logging.getLogger("agent_framework.bedrock")
-
 DEFAULT_REGION = "us-east-1"
+
+
+class BedrockEmbeddingSettings(TypedDict, total=False):
+    """Bedrock embedding settings."""
+
+    region: str | None
+    embedding_model_id: str | None
+    access_key: SecretString | None
+    secret_key: SecretString | None
+    session_token: SecretString | None
 
 
 class BedrockEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -61,16 +72,6 @@ BedrockEmbeddingOptionsT = TypeVar(
 )
 
 
-class BedrockEmbeddingSettings(TypedDict, total=False):
-    """Bedrock embedding settings."""
-
-    region: str | None
-    embedding_model_id: str | None
-    access_key: SecretString | None
-    secret_key: SecretString | None
-    session_token: SecretString | None
-
-
 class RawBedrockEmbeddingClient(
     BaseEmbeddingClient[str, list[float], BedrockEmbeddingOptionsT],
     Generic[BedrockEmbeddingOptionsT],
@@ -80,8 +81,9 @@ class RawBedrockEmbeddingClient(
     Keyword Args:
         model_id: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
             Can also be set via environment variable BEDROCK_EMBEDDING_MODEL_ID.
-        region: AWS region. Defaults to "us-east-1".
-            Can also be set via environment variable BEDROCK_REGION.
+        region: AWS region. Will try to load from BEDROCK_REGION env var,
+            if not set, the regular Boto3 configuration/loading applies
+            (which may include other env vars, config files, or instance metadata).
         access_key: AWS access key for manual credential injection.
         secret_key: AWS secret key paired with access_key.
         session_token: AWS session token for temporary credentials.
@@ -118,39 +120,33 @@ class RawBedrockEmbeddingClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        if not settings.get("region"):
-            settings["region"] = DEFAULT_REGION
+        resolved_region = settings.get("region") or DEFAULT_REGION
 
         if client is None:
-            session = boto3_session or self._create_session(settings)
-            client = session.client(
+            if not boto3_session:
+                session_kwargs: dict[str, Any] = {}
+                if region := settings.get("region"):
+                    session_kwargs["region_name"] = region
+                if (access_key := settings.get("access_key")) and (secret_key := settings.get("secret_key")):
+                    session_kwargs["aws_access_key_id"] = access_key.get_secret_value()  # type: ignore[union-attr]
+                    session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()  # type: ignore[union-attr]
+                if session_token := settings.get("session_token"):
+                    session_kwargs["aws_session_token"] = session_token.get_secret_value()  # type: ignore[union-attr]
+                boto3_session = Boto3Session(**session_kwargs)
+            client = boto3_session.client(
                 "bedrock-runtime",
-                region_name=settings["region"],
+                region_name=boto3_session.region_name or resolved_region,
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
         self._bedrock_client = client
-        self.model_id = settings["embedding_model_id"]
-        self.region = settings["region"]
+        self.model_id = settings["embedding_model_id"]  # type: ignore[assignment]
+        self.region = resolved_region
         super().__init__(**kwargs)
-
-    @staticmethod
-    def _create_session(settings: BedrockEmbeddingSettings) -> Boto3Session:
-        """Create a boto3 session from settings."""
-        session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
-        if settings.get("access_key") and settings.get("secret_key"):
-            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()  # type: ignore[union-attr]
-            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()  # type: ignore[union-attr]
-        if settings.get("session_token"):
-            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()  # type: ignore[union-attr]
-        return Boto3Session(**session_kwargs)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
-        meta = getattr(self._bedrock_client, "meta", None)
-        if meta and hasattr(meta, "endpoint_url"):
-            return str(meta.endpoint_url)
-        return f"https://bedrock-runtime.{self.region}.amazonaws.com"
+        return str(self._bedrock_client.meta.endpoint_url)
 
     async def get_embeddings(
         self,
@@ -181,40 +177,49 @@ class RawBedrockEmbeddingClient(
         if not model:
             raise ValueError("model_id is required")
 
+        embedding_results = await asyncio.gather(
+            *(self._generate_embedding_for_text(opts, model, text) for text in values)
+        )
         embeddings: list[Embedding[list[float]]] = []
         total_input_tokens = 0
+        for embedding, input_tokens in embedding_results:
+            embeddings.append(embedding)
+            total_input_tokens += input_tokens
 
-        for text in values:
-            body: dict[str, Any] = {"inputText": text}
-            if dimensions := opts.get("dimensions"):
-                body["dimensions"] = dimensions
-            if (normalize := opts.get("normalize")) is not None:
-                body["normalize"] = normalize
-
-            response = await asyncio.to_thread(
-                self._bedrock_client.invoke_model,
-                modelId=model,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps(body),
-            )
-
-            response_body = json.loads(response["body"].read())
-            vector = response_body["embedding"]
-            embeddings.append(
-                Embedding(
-                    vector=vector,
-                    dimensions=len(vector),
-                    model_id=model,
-                )
-            )
-            total_input_tokens += response_body.get("inputTextTokenCount", 0)
-
-        usage_dict: dict[str, Any] | None = None
+        usage_dict: UsageDetails | None = None
         if total_input_tokens > 0:
-            usage_dict = {"prompt_tokens": total_input_tokens}
+            usage_dict = {"input_token_count": total_input_tokens}
 
         return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+
+    async def _generate_embedding_for_text(
+        self,
+        opts: dict[str, Any],
+        model: str,
+        text: str,
+    ) -> tuple[Embedding[list[float]], int]:
+        body: dict[str, Any] = {"inputText": text}
+        if dimensions := opts.get("dimensions"):
+            body["dimensions"] = dimensions
+        if (normalize := opts.get("normalize")) is not None:
+            body["normalize"] = normalize
+
+        response = await asyncio.to_thread(
+            self._bedrock_client.invoke_model,
+            modelId=model,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(body),
+        )
+
+        response_body = json.loads(response["body"].read())
+        embedding = Embedding(
+            vector=response_body["embedding"],
+            dimensions=len(response_body["embedding"]),
+            model_id=model,
+        )
+        input_tokens = int(response_body.get("inputTextTokenCount", 0))
+        return embedding, input_tokens
 
 
 class BedrockEmbeddingClient(

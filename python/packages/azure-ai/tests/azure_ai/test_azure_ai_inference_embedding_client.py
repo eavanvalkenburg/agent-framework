@@ -169,9 +169,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
         call_kwargs = mock_text_client.embed.call_args
         assert call_kwargs.kwargs["model"] == "custom-model"
 
-    async def test_unsupported_content_type_raises(
-        self, raw_client: RawAzureAIInferenceEmbeddingClient[Any]
-    ) -> None:
+    async def test_unsupported_content_type_raises(self, raw_client: RawAzureAIInferenceEmbeddingClient[Any]) -> None:
         """Non-text, non-image Content raises ValueError."""
         error_content = Content("error", message="fail")
         with pytest.raises(ValueError, match="Unsupported Content type"):
@@ -181,12 +179,10 @@ class TestRawAzureAIInferenceEmbeddingClient:
         self, raw_client: RawAzureAIInferenceEmbeddingClient[Any], mock_text_client: AsyncMock
     ) -> None:
         """Usage metadata is populated from the response."""
-        mock_text_client.embed.return_value = _make_embed_response(
-            [[0.1, 0.2]], prompt_tokens=42
-        )
+        mock_text_client.embed.return_value = _make_embed_response([[0.1, 0.2]], prompt_tokens=42)
         result = await raw_client.get_embeddings(["hello"])
         assert result.usage is not None
-        assert result.usage["prompt_tokens"] == 42
+        assert result.usage["input_token_count"] == 42
 
     def test_service_url(self, raw_client: RawAzureAIInferenceEmbeddingClient[Any]) -> None:
         """service_url returns the configured endpoint."""
@@ -229,9 +225,7 @@ class TestRawAzureAIInferenceEmbeddingClient:
             assert client.model_id == "text-model"
             assert client.image_model_id == "image-model"
 
-    def test_image_model_id_explicit(
-        self, mock_text_client: AsyncMock, mock_image_client: AsyncMock
-    ) -> None:
+    def test_image_model_id_explicit(self, mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> None:
         """image_model_id can be set explicitly."""
         client = RawAzureAIInferenceEmbeddingClient(
             model_id="text-model",
@@ -277,9 +271,7 @@ class TestAzureAIInferenceEmbeddingClient:
         """Default OTEL provider name is azure.ai.inference."""
         assert AzureAIInferenceEmbeddingClient.OTEL_PROVIDER_NAME == "azure.ai.inference"
 
-    async def test_otel_provider_name_override(
-        self, mock_text_client: AsyncMock, mock_image_client: AsyncMock
-    ) -> None:
+    async def test_otel_provider_name_override(self, mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> None:
         """OTEL provider name can be overridden."""
         client = AzureAIInferenceEmbeddingClient(
             model_id="test-model",

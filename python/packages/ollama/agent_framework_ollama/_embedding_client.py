@@ -7,8 +7,14 @@ import sys
 from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
-from agent_framework import BaseEmbeddingClient, Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings
-from agent_framework._settings import load_settings
+from agent_framework import (
+    BaseEmbeddingClient,
+    Embedding,
+    EmbeddingGenerationOptions,
+    GeneratedEmbeddings,
+    UsageDetails,
+    load_settings,
+)
 from agent_framework.observability import EmbeddingTelemetryLayer
 from ollama import AsyncClient
 
@@ -155,10 +161,10 @@ class RawOllamaEmbeddingClient(
             for emb in response.get("embeddings", [])
         ]
 
-        usage_dict: dict[str, Any] | None = None
+        usage_dict: UsageDetails | None = None
         prompt_eval_count = response.get("prompt_eval_count")
         if prompt_eval_count is not None:
-            usage_dict = {"prompt_tokens": prompt_eval_count}
+            usage_dict = {"input_token_count": prompt_eval_count}
 
         return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
 
