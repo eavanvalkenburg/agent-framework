@@ -16,7 +16,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -224,9 +224,10 @@ async def conclude_workflow(
 
 async def main() -> None:
     # Create agent
-    email_writer_agent = AzureOpenAIResponsesClient(
+    email_writer_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="EmailWriter",

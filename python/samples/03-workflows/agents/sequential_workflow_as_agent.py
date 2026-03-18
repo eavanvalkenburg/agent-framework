@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -27,15 +27,16 @@ Note on internal adapters:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
+- Azure OpenAI access configured for OpenAIResponsesClient (use az login + env vars)
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

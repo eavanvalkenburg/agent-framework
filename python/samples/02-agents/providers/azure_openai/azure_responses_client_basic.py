@@ -4,8 +4,8 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -16,7 +16,7 @@ load_dotenv()
 """
 Azure OpenAI Responses Client Basic Example
 
-This sample demonstrates basic usage of AzureOpenAIResponsesClient for structured
+This sample demonstrates basic usage of OpenAIResponsesClient for structured
 response generation, showing both streaming and non-streaming responses.
 """
 
@@ -39,7 +39,7 @@ async def non_streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
+    agent = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -56,7 +56,8 @@ async def streaming_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

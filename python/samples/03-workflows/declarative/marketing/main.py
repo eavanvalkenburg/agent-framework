@@ -16,8 +16,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -54,9 +54,10 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

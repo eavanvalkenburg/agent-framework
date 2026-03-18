@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Agent, ChatResponse
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai.types.responses.response import Response as OpenAIResponse
@@ -26,7 +26,7 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential())
 
     # Create code interpreter tool using instance method
     code_interpreter_tool = client.get_code_interpreter_tool()

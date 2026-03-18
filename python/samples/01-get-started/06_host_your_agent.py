@@ -4,7 +4,8 @@
 # fmt: off
 from typing import Any
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -14,7 +15,7 @@ load_dotenv()
 """Host your agent with Azure Functions.
 
 This sample shows the Python hosting pattern used in docs:
-- Create an agent with `AzureOpenAIChatClient`
+- Create an agent with `OpenAIChatClient`
 - Register it with `AgentFunctionApp`
 - Run with Azure Functions Core Tools (`func start`)
 
@@ -30,7 +31,7 @@ Environment variables:
 # <create_agent>
 def _create_agent() -> Any:
     """Create a hosted agent backed by Azure OpenAI."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="HostedAgent",
         instructions="You are a helpful assistant hosted in Azure Functions.",
     )

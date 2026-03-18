@@ -6,7 +6,7 @@ import os
 from agent_framework import (
     Agent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -23,7 +23,7 @@ like any other agent while still emitting callback telemetry.
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI credentials configured for `AzureOpenAIResponsesClient` and `AzureOpenAIResponsesClient`.
+- OpenAI credentials configured for `OpenAIResponsesClient` and `OpenAIResponsesClient`.
 """
 
 
@@ -35,17 +35,19 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
 
     # Create code interpreter tool using instance method
-    coder_client = AzureOpenAIResponsesClient(
+    coder_client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
     code_interpreter_tool = coder_client.get_code_interpreter_tool()
@@ -63,9 +65,10 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )

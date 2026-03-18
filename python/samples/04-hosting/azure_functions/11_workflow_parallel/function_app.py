@@ -36,7 +36,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
@@ -382,7 +382,7 @@ def _create_workflow() -> Workflow:
                                                  └──> final_report
     """
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = OpenAIChatClient(backend="azure_openai", **client_kwargs)
 
     # Create agents for parallel analysis
     sentiment_agent = chat_client.as_agent(

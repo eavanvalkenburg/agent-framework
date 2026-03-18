@@ -18,7 +18,8 @@ import os
 from typing import Any
 
 from agent_framework import tool
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -71,7 +72,7 @@ def create_weather_agent():
     Returns:
         Agent: The configured Weather agent with weather tool
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=WEATHER_AGENT_NAME,
         instructions="You are a helpful weather assistant. Provide current weather information.",
         tools=[get_weather],
@@ -84,7 +85,7 @@ def create_math_agent():
     Returns:
         Agent: The configured Math agent with calculation tools
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=MATH_AGENT_NAME,
         instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
         tools=[calculate_tip],

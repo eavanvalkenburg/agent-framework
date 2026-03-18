@@ -5,7 +5,7 @@ import os
 from textwrap import dedent
 
 from agent_framework import Agent, Skill, SkillsProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -59,9 +59,10 @@ async def main() -> None:
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
 
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model_id=deployment,
         credential=AzureCliCredential(),
     )
 

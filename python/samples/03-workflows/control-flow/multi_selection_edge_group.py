@@ -20,7 +20,7 @@ from agent_framework import (
     WorkflowEvent,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -188,9 +188,10 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
 
 def create_email_analysis_agent() -> Agent:
     """Creates the email analysis agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=(
@@ -205,9 +206,10 @@ def create_email_analysis_agent() -> Agent:
 
 def create_email_assistant_agent() -> Agent:
     """Creates the email assistant agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
@@ -218,9 +220,10 @@ def create_email_assistant_agent() -> Agent:
 
 def create_email_summary_agent() -> Agent:
     """Creates the email summary agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=("You are an assistant that helps users summarize emails."),

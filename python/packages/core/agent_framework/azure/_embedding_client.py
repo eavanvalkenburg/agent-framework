@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping
-from typing import Generic
+from typing import Any, Generic
 
 from openai.lib.azure import AsyncAzureOpenAI
 
+from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.observability import EmbeddingTelemetryLayer
 from agent_framework.openai import OpenAIEmbeddingOptions
 from agent_framework.openai._embedding_client import RawOpenAIEmbeddingClient
+from agent_framework.openai._shared import serialize_openai_default_headers
 
 from .._settings import load_settings
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
-    AzureOpenAIConfigMixin,
     AzureOpenAISettings,
     _apply_azure_defaults,  # pyright: ignore[reportPrivateUsage]
+    resolve_credential_to_token_provider,
 )
 
 if sys.version_info >= (3, 13):
@@ -39,7 +41,6 @@ AzureOpenAIEmbeddingOptionsT = TypeVar(
 
 
 class AzureOpenAIEmbeddingClient(
-    AzureOpenAIConfigMixin,
     EmbeddingTelemetryLayer[str, list[float], AzureOpenAIEmbeddingOptionsT],
     RawOpenAIEmbeddingClient[AzureOpenAIEmbeddingOptionsT],
     Generic[AzureOpenAIEmbeddingOptionsT],
@@ -87,6 +88,8 @@ class AzureOpenAIEmbeddingClient(
             result = await client.get_embeddings(["Hello, world!"])
     """
 
+    OTEL_PROVIDER_NAME = "azure.ai.openai"
+
     def __init__(
         self,
         *,
@@ -112,30 +115,63 @@ class AzureOpenAIEmbeddingClient(
             endpoint=endpoint,
             embedding_deployment_name=deployment_name,
             api_version=api_version,
+            required_fields=["embedding_deployment_name"],
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             token_endpoint=token_endpoint,
         )
         _apply_azure_defaults(azure_openai_settings)
 
-        embedding_deployment_name = azure_openai_settings.get("embedding_deployment_name")
-        if not embedding_deployment_name:
-            raise ValueError(
-                "Azure OpenAI embedding deployment name is required. Set via 'deployment_name' parameter "
-                "or 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME' environment variable."
-            )
+        embedding_deployment_name: str = azure_openai_settings["embedding_deployment_name"]  # type: ignore[assignment,typeddict-item]
 
         api_key_secret = azure_openai_settings.get("api_key")
+        api_key_value = api_key_secret.get_secret_value() if api_key_secret else None
+
+        if async_client is None:
+            ad_token_provider = None
+            if api_key_value is None and credential is not None:
+                ad_token_provider = resolve_credential_to_token_provider(
+                    credential,
+                    azure_openai_settings.get("token_endpoint"),
+                )
+
+            if api_key_value is None and ad_token_provider is None:
+                raise ValueError("Please provide either api_key, credential, or a client.")
+
+            resolved_base_url = azure_openai_settings.get("base_url")
+            resolved_endpoint = azure_openai_settings.get("endpoint")
+            if resolved_base_url is None and resolved_endpoint is None:
+                raise ValueError("Please provide an endpoint or a base_url")
+
+            merged_headers = dict(default_headers) if default_headers else {}
+            if APP_INFO:
+                merged_headers.update(APP_INFO)
+                merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+
+            client_kwargs: dict[str, Any] = {
+                "default_headers": merged_headers,
+                "azure_deployment": embedding_deployment_name,
+            }
+            if api_version_value := azure_openai_settings.get("api_version"):
+                client_kwargs["api_version"] = api_version_value
+            if ad_token_provider is not None:
+                client_kwargs["azure_ad_token_provider"] = ad_token_provider
+            if api_key_value is not None:
+                client_kwargs["api_key"] = api_key_value
+            if resolved_base_url is not None:
+                client_kwargs["base_url"] = str(resolved_base_url)
+            elif resolved_endpoint is not None:
+                client_kwargs["azure_endpoint"] = str(resolved_endpoint)
+
+            async_client = AsyncAzureOpenAI(**client_kwargs)
 
         super().__init__(
-            deployment_name=embedding_deployment_name,
-            endpoint=azure_openai_settings.get("endpoint"),
-            base_url=azure_openai_settings.get("base_url"),
-            api_version=azure_openai_settings.get("api_version") or "",
-            api_key=api_key_secret.get_secret_value() if api_key_secret else None,
-            token_endpoint=azure_openai_settings.get("token_endpoint"),
-            credential=credential,
-            default_headers=default_headers,
+            model_id=embedding_deployment_name,
             client=async_client,
             otel_provider_name=otel_provider_name,
         )
+        self.endpoint = str(azure_openai_settings.get("endpoint"))
+        self.base_url = str(azure_openai_settings.get("base_url"))
+        self.api_version = azure_openai_settings.get("api_version")
+        self.deployment_name = embedding_deployment_name
+        self.default_headers = serialize_openai_default_headers(default_headers)

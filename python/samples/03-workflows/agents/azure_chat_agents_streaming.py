@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import AgentResponseUpdate, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -18,7 +18,7 @@ This sample shows how to create AzureOpenAI Chat Agents and use them in a workfl
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
@@ -27,9 +27,10 @@ Prerequisites:
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the agents
-    writer_agent = AzureOpenAIResponsesClient(
+    writer_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=(
@@ -38,9 +39,10 @@ async def main():
         name="writer",
     )
 
-    reviewer_agent = AzureOpenAIResponsesClient(
+    reviewer_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=(

@@ -20,7 +20,7 @@ from typing import Any
 import openai
 import pandas as pd
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -321,9 +321,10 @@ async def run_self_reflection_batch(
         load_dotenv(override=True)
 
     # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
-    responses_client = AzureOpenAIResponsesClient(
+    responses_client = OpenAIResponsesClient(
+        backend="foundry",
         project_client=project_client,
-        deployment_name=agent_model,
+        model_id=agent_model,
     )
 
     # Load input data

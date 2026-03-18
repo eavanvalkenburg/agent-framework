@@ -4,7 +4,8 @@ import os
 from datetime import datetime, timezone
 
 from agent_framework import Agent, InMemoryHistoryProvider
-from agent_framework.azure import AzureOpenAIResponsesClient, FoundryMemoryProvider
+from agent_framework.azure import FoundryMemoryProvider
+from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MemoryStoreDefaultDefinition,
@@ -75,7 +76,7 @@ async def main() -> None:
         print("==========================================")
 
         # Create the chat client
-        client = AzureOpenAIResponsesClient(project_client=project_client)
+        client = OpenAIResponsesClient(backend="foundry", project_client=project_client)
         # Create the Foundry Memory context provider
         memory_provider = FoundryMemoryProvider(
             project_client=project_client,

@@ -7,7 +7,7 @@ Integration with Azure AI Foundry for persistent agents and project-based agent 
 - **`AzureAIAgentClient`** - Chat client for Azure AI Agents (persistent agents with threads)
 - **`AzureAIClient`** - Client for Azure AI Foundry project-based agents
 - **`AzureAIAgentsProvider`** - Provider for listing/managing Azure AI agents
-- **`AzureAIProjectAgentProvider`** - Provider for project-scoped agent management
+- **`AzureAIProjectAgentProvider`** - Deprecated provider for project-scoped agent management
 - **`AzureAISettings`** - Pydantic settings for Azure AI configuration
 - **`AzureAIAgentOptions`** / **`AzureAIProjectAgentOptions`** - Options TypedDicts
 

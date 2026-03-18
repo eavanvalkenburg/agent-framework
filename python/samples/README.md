@@ -50,7 +50,7 @@ export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
 
 **Option 3: Using `env_file_path` parameter** (for per-client configuration):
 
-All client classes (e.g., `OpenAIChatClient`, `AzureOpenAIResponsesClient`) support an `env_file_path` parameter to load environment variables from a specific file:
+All client classes (e.g., `OpenAIChatClient`, `OpenAIResponsesClient`) support an `env_file_path` parameter to load environment variables from a specific file:
 
 ```python
 from agent_framework.openai import OpenAIChatClient

@@ -11,7 +11,7 @@ from agent_framework import (
     Message,
     resolve_agent_id,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -30,7 +30,7 @@ Routing Pattern:
 
 Prerequisites:
     - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-    - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+    - Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
     - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 
 Key Concepts:
@@ -43,7 +43,7 @@ load_dotenv()
 
 
 def create_agents(
-    client: AzureOpenAIResponsesClient,
+    client: OpenAIResponsesClient,
 ) -> tuple[Agent, Agent, Agent]:
     """Create coordinator and specialists for autonomous iteration."""
     coordinator = client.as_agent(
@@ -79,9 +79,10 @@ def create_agents(
 
 async def main() -> None:
     """Run an autonomous handoff workflow with specialist iteration enabled."""
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
     coordinator, research_agent, summary_agent = create_agents(client)

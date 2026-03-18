@@ -12,7 +12,7 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -43,7 +43,7 @@ events, and prints the final answer. The workflow completes when idle.
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
@@ -52,9 +52,10 @@ load_dotenv()
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

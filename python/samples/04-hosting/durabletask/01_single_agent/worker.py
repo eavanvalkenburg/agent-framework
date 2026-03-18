@@ -16,7 +16,8 @@ import logging
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -35,7 +36,7 @@ def create_joker_agent() -> Agent:
     Returns:
         Agent: The configured Joker agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="Joker",
         instructions="You are good at telling jokes.",
     )

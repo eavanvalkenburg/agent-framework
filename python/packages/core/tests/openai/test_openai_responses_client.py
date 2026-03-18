@@ -40,10 +40,12 @@ from agent_framework import (
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
+    SettingNotFoundError,
 )
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
-from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY, RawOpenAIResponsesClient
+from agent_framework.openai._shared import OpenAIBase, OpenAIConfigMixin
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -103,6 +105,78 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
+def test_init_mro_excludes_openai_config_mixin() -> None:
+    assert OpenAIConfigMixin not in OpenAIResponsesClient.__mro__
+    assert OpenAIBase not in OpenAIResponsesClient.__mro__
+
+
+def test_raw_init_openai_backend(openai_unit_test_env: dict[str, str]) -> None:
+    client = RawOpenAIResponsesClient()
+
+    assert client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
+    assert client.backend == "openai"
+
+
+def test_raw_init_foundry_backend() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = MagicMock()
+
+    client = RawOpenAIResponsesClient(
+        backend="foundry",
+        model_id="gpt-4.1",
+        project_client=mock_project_client,
+    )
+
+    assert client.model_id == "gpt-4.1"
+    assert client.backend == "foundry"
+    assert client.client is mock_project_client.get_openai_client.return_value
+
+
+def test_raw_init_foundry_hosted_agent_backend() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = MagicMock()
+
+    client = RawOpenAIResponsesClient(
+        backend="foundry_hosted_agent",
+        agent_name="hosted-agent",
+        project_client=mock_project_client,
+    )
+
+    assert client.model_id is None
+    assert client.backend == "foundry_hosted_agent"
+    assert client.agent_reference == {"name": "hosted-agent", "type": "agent_reference"}
+    assert client.client is mock_project_client.get_openai_client.return_value
+
+
+def test_raw_init_foundry_hosted_agent_requires_agent_name() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = MagicMock()
+
+    with pytest.raises(ValueError, match="agent_name"):
+        RawOpenAIResponsesClient(
+            backend="foundry_hosted_agent",
+            project_client=mock_project_client,
+        )
+
+
+async def test_prepare_options_injects_foundry_hosted_agent_reference() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = MagicMock()
+    client = RawOpenAIResponsesClient(
+        backend="foundry_hosted_agent",
+        agent_name="hosted-agent",
+        project_client=mock_project_client,
+    )
+
+    run_options = await client._prepare_options(
+        [Message(role="user", text="Hello")],
+        {"model_id": "should-not-be-used"},
+    )
+
+    assert "model" not in run_options
+    assert run_options["extra_body"] == {"agent_reference": {"name": "hosted-agent", "type": "agent_reference"}}
+
+
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ValueError):
@@ -137,7 +211,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError, match="responses_model_id"):
         OpenAIResponsesClient()
 
 
@@ -145,7 +219,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError, match="api_key"):
         OpenAIResponsesClient(
             model_id=model_id,
         )

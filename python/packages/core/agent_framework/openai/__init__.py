@@ -18,7 +18,7 @@ from ._assistants_client import (
     OpenAIAssistantsClient,
     OpenAIAssistantsOptions,
 )
-from ._chat_client import OpenAIChatClient, OpenAIChatOptions
+from ._chat_client import AzureOpenAIChatOptions, AzureUserSecurityContext, OpenAIChatClient, OpenAIChatOptions
 from ._embedding_client import OpenAIEmbeddingClient, OpenAIEmbeddingOptions
 from ._exceptions import ContentFilterResultSeverity, OpenAIContentFilterException
 from ._responses_client import (
@@ -31,6 +31,8 @@ from ._shared import OpenAISettings
 
 __all__ = [
     "AssistantToolResources",
+    "AzureOpenAIChatOptions",
+    "AzureUserSecurityContext",
     "ContentFilterResultSeverity",
     "OpenAIAssistantProvider",
     "OpenAIAssistantsClient",

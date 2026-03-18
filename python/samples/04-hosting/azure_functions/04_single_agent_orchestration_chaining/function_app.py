@@ -3,7 +3,7 @@
 """Chain two runs of a single agent inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to construct the writer agent hosted by Agent Framework.
+- OpenAIChatClient to construct the writer agent hosted by Agent Framework.
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
 - Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
@@ -16,7 +16,8 @@ from collections.abc import Generator
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -38,7 +39,7 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

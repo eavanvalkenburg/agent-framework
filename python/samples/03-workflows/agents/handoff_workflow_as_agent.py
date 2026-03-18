@@ -12,7 +12,7 @@ from agent_framework import (
     WorkflowAgent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -31,7 +31,7 @@ them to transfer control to each other based on the conversation context.
 Prerequisites:
     - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for AzureOpenAIResponsesClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
+    - Environment variables configured for OpenAIResponsesClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -63,11 +63,11 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent, Agent]:
+def create_agents(client: OpenAIResponsesClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        client: The AzureOpenAIResponsesClient to use for creating agents.
+        client: The OpenAIResponsesClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
@@ -153,9 +153,10 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI chat client
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

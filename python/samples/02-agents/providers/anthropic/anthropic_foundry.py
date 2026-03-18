@@ -2,8 +2,9 @@
 
 import asyncio
 
+from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
-from anthropic import AsyncAnthropicFoundry
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -20,8 +21,6 @@ This sample demonstrates using Anthropic with:
 This example requires `anthropic>=0.74.0` and an endpoint in Foundry for Anthropic.
 
 To use the Foundry integration ensure you have the following environment variables set:
-- ANTHROPIC_FOUNDRY_API_KEY
-    Alternatively you can pass in a azure_ad_token_provider function to the AsyncAnthropicFoundry constructor.
 - ANTHROPIC_FOUNDRY_ENDPOINT
     Should be something like https://<your-resource-name>.services.ai.azure.com/anthropic/
 - ANTHROPIC_CHAT_MODEL_ID
@@ -31,7 +30,7 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient(anthropic_client=AsyncAnthropicFoundry())
+    client = AnthropicClient(backend="foundry", credential=AzureCliCredential())
 
     # Create MCP tool configuration using instance method
     mcp_tool = client.get_mcp_tool(
@@ -42,7 +41,8 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[mcp_tool, web_search_tool],

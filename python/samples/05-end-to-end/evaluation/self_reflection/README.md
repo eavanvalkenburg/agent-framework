@@ -7,7 +7,7 @@ This sample demonstrates the self-reflection pattern using Agent Framework and A
 **What it demonstrates:**
 - Iterative self-reflection loop that automatically improves responses based on groundedness evaluation
 - Batch processing of prompts from JSONL files with progress tracking
-- Using `AzureOpenAIResponsesClient` with a Project Endpoint and Azure CLI authentication
+- Using `OpenAIResponsesClient` with a Project Endpoint and Azure CLI authentication
 - Comprehensive summary statistics and detailed result tracking
 
 ## Prerequisites

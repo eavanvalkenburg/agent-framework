@@ -5,8 +5,8 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -17,7 +17,7 @@ load_dotenv()
 """
 Azure OpenAI Responses Client with Foundry Project Example
 
-This sample demonstrates how to create an AzureOpenAIResponsesClient using an
+This sample demonstrates how to create an OpenAIResponsesClient using an
 Azure AI Foundry project endpoint. Instead of providing an Azure OpenAI endpoint
 directly, you provide a Foundry project endpoint and the client is created via
 the Azure AI Foundry project SDK.
@@ -43,15 +43,17 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    # 1. Create the AzureOpenAIResponsesClient using a Foundry project endpoint.
+    # 1. Create the OpenAIResponsesClient using a Foundry project endpoint.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     credential = AzureCliCredential()
-    agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
-    ).as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(
+            backend="foundry",
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+            credential=credential,
+        ),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -67,13 +69,14 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    # 1. Create the AzureOpenAIResponsesClient using a Foundry project endpoint.
+    # 1. Create the OpenAIResponsesClient using a Foundry project endpoint.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     credential = AzureCliCredential()
-    agent = AzureOpenAIResponsesClient(
+    agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=credential,
     ).as_agent(
         instructions="You are a helpful weather agent.",

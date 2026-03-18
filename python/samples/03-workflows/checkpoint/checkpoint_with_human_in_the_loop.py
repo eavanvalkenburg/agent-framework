@@ -21,7 +21,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -178,9 +178,10 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
-    writer_agent = AzureOpenAIResponsesClient(
+    writer_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions="Write concise, warm release notes that sound human and helpful.",

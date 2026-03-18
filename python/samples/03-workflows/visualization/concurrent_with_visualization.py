@@ -15,7 +15,7 @@ from agent_framework import (
     WorkflowViz,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -33,7 +33,7 @@ What it does:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure AI/ Azure OpenAI for `AzureOpenAIResponsesClient` agents.
+- Azure AI/ Azure OpenAI for `OpenAIResponsesClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.
 """
@@ -96,9 +96,10 @@ async def main() -> None:
 
     # Create agent instances
     researcher = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(
@@ -110,9 +111,10 @@ async def main() -> None:
     )
 
     marketer = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(
@@ -124,9 +126,10 @@ async def main() -> None:
     )
 
     legal = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(

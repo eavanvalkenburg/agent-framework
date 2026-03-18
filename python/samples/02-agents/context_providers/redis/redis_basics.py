@@ -31,7 +31,7 @@ import asyncio
 import os
 
 from agent_framework import Message, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -99,11 +99,12 @@ def search_flights(origin_airport_code: str, destination_airport_code: str, deta
     )
 
 
-def create_chat_client() -> AzureOpenAIResponsesClient:
+def create_chat_client() -> OpenAIResponsesClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

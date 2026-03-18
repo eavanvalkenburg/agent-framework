@@ -4,7 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -103,7 +103,7 @@ async def run_hosted_mcp_without_session_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a session."""
     print("=== Mcp with approvals and without session ===")
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(credential=credential)
+    client = OpenAIResponsesClient(backend="azure_openai", credential=credential)
 
     # Create MCP tool with specific approval settings
     mcp_tool = client.get_mcp_tool(
@@ -140,7 +140,7 @@ async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(credential=credential)
+    client = OpenAIResponsesClient(backend="azure_openai", credential=credential)
 
     # Create MCP tool without approval requirements
     mcp_tool = client.get_mcp_tool(
@@ -178,7 +178,7 @@ async def run_hosted_mcp_with_session() -> None:
     """Example showing Mcp Tools with approvals using a session."""
     print("=== Mcp with approvals and with session ===")
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(credential=credential)
+    client = OpenAIResponsesClient(backend="azure_openai", credential=credential)
 
     # Create MCP tool with always require approval
     mcp_tool = client.get_mcp_tool(
@@ -215,7 +215,7 @@ async def run_hosted_mcp_with_session_streaming() -> None:
     """Example showing Mcp Tools with approvals using a session."""
     print("=== Mcp with approvals and with session ===")
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(credential=credential)
+    client = OpenAIResponsesClient(backend="azure_openai", credential=credential)
 
     # Create MCP tool with always require approval
     mcp_tool = client.get_mcp_tool(

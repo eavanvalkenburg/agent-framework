@@ -220,7 +220,7 @@ def test_create_client_from_project_with_endpoint() -> None:
     mock_openai_client = MagicMock(spec=AsyncOpenAI)
     mock_credential = MagicMock()
 
-    with patch("agent_framework.azure._responses_client.AIProjectClient") as MockAIProjectClient:
+    with patch("azure.ai.projects.aio.AIProjectClient") as MockAIProjectClient:
         mock_instance = MockAIProjectClient.return_value
         mock_instance.get_openai_client.return_value = mock_openai_client
 

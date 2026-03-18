@@ -94,11 +94,15 @@ Use typing as a helper first and suppressions as a last resort:
 - **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
   unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
 - **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
-- **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
-  (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
+- **Line-level `# type: ignore[...]` only**: If suppression is still required, use a line-level rule-specific
+  `# type: ignore[...]`, file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
   Never change the global suppression flags for mypy and pyright unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
   codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+- **Prefer `required_fields` for settings**: When a value is required immediately after `load_settings(...)`,
+  enforce that with `required_fields=` instead of repeating manual post-load `None` checks. If pyright cannot
+  follow the runtime guarantee from `required_fields`, use a targeted line-level `# type: ignore[...]` on the narrowed
+  assignment instead of reintroducing redundant validation branches.
 
 ## Function Parameter Guidelines
 

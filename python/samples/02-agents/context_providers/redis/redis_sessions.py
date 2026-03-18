@@ -29,7 +29,7 @@ Run:
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -46,11 +46,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
 # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
-def create_chat_client() -> AzureOpenAIResponsesClient:
+def create_chat_client() -> OpenAIResponsesClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

@@ -13,7 +13,7 @@ from agent_framework import (
     WorkflowRunState,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -33,7 +33,7 @@ Notes:
 - Not all agents can share threads; usually only the same type of agents can share threads.
 
 Demonstrate:
-- Creating multiple agents with AzureOpenAIResponsesClient.
+- Creating multiple agents with OpenAIResponsesClient.
 - Setting up a shared thread between agents.
 
 Prerequisites:
@@ -57,9 +57,10 @@ async def intercept_agent_response(
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

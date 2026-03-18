@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.exceptions import ChatClientException
+from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
@@ -92,7 +92,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_deployment_name(
     azure_openai_unit_test_env: dict[str, str],
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError, match="chat_deployment_name"):
         AzureOpenAIChatClient()
 
 

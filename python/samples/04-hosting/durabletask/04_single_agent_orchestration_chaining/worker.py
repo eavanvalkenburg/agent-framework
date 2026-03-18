@@ -18,7 +18,8 @@ import os
 from collections.abc import Generator
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -49,7 +50,7 @@ def create_writer_agent() -> "Agent":
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

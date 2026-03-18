@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -39,8 +39,9 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIResponsesClient(
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    agent = OpenAIResponsesClient(
+        backend="azure_openai",
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         credential=AzureCliCredential(),
     ).as_agent(

@@ -11,7 +11,7 @@ from agent_framework import (
     WorkflowEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -106,9 +106,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
     database_agent = client.as_agent(

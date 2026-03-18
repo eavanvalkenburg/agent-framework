@@ -19,7 +19,7 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -189,7 +189,7 @@ async def run_semantic_kernel_example(initial_task: str, scripted_responses: Seq
 ######################################################################
 
 
-def _create_af_agents(client: AzureOpenAIChatClient):
+def _create_af_agents(client: OpenAIChatClient):
     triage = client.as_agent(
         name="triage_agent",
         instructions=(
@@ -241,7 +241,7 @@ def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
 
 
 async def run_agent_framework_example(initial_task: str, scripted_responses: Sequence[str]) -> str:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential())
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (

@@ -3,7 +3,8 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -13,7 +14,7 @@ load_dotenv()
 """
 Hello Agent — Simplest possible agent
 
-This sample creates a minimal agent using AzureOpenAIResponsesClient via an
+This sample creates a minimal agent using OpenAIResponsesClient via an
 Azure AI Foundry project endpoint, and runs it in both non-streaming and streaming modes.
 
 There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
@@ -27,13 +28,15 @@ Environment variables:
 async def main() -> None:
     # <create_agent>
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="HelloAgent",
         instructions="You are a friendly assistant. Keep your answers brief.",
     )

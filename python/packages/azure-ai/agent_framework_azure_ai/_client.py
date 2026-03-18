@@ -7,7 +7,6 @@ import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
-from contextlib import suppress
 from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
@@ -36,13 +35,12 @@ from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    AgentVersionDetails,
     ApproximateLocation,
     AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
     ImageGenTool,
     MCPTool,
-    PromptAgentDefinition,
-    PromptAgentDefinitionTextOptions,
     RaiConfig,
     Reasoning,
     WebSearchPreviewTool,
@@ -50,12 +48,13 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
-from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
+from ._shared import AzureAISettings, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -110,6 +109,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         self,
         *,
         project_client: AIProjectClient | None = None,
+        details: AgentVersionDetails | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
         agent_description: str | None = None,
@@ -119,6 +119,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         allow_preview: bool | None = None,
+        warn_on_ignored_runtime_options: bool = True,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -130,22 +131,32 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
-            agent_name: The name to use when creating new agents or using existing agents.
+
+            details: Existing AgentVersionDetails to use directly instead of separate name/version values.
+
+            agent_name: The name of an existing agent to use.
+                Can also be set via environment variable AZURE_AI_AGENT_NAME.
             agent_version: The version of the agent to use.
-            agent_description: The description to use when creating new agents.
+                Can also be set via environment variable AZURE_AI_AGENT_VERSION.
+            agent_description: The description associated with the existing agent reference.
+
             conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
                 Ignored when a project_client is passed.
-            model_deployment_name: The model deployment name to use for agent creation.
+            model_deployment_name: The model deployment name associated with the existing agent.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
+
+            warn_on_ignored_runtime_options: Whether to warn when runtime instructions or
+                response_format values are ignored.
             additional_properties: Additional properties stored on the client instance.
+
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -157,13 +168,17 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_AI_AGENT_NAME=my-agent
+                # Set AZURE_AI_AGENT_VERSION=1
+                # Optional: set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
                 client = AzureAIClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
+                    agent_name="my-agent",
+                    agent_version="1",
                     model_deployment_name="gpt-4",
                     credential=credential,
                 )
@@ -183,24 +198,37 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
+        if details is not None:
+            agent_name = details.name
+            agent_version = details.version
+            agent_description = agent_description or details.description
+            detail_model_id = getattr(details.definition, "model", None)
+            if isinstance(detail_model_id, str) and model_deployment_name is None:
+                model_deployment_name = detail_model_id
+
         azure_ai_settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment_name,
+            agent_name=agent_name,
+            agent_version=agent_version,
+            required_fields=[
+                "agent_name",
+                "agent_version",
+                *(["project_endpoint"] if project_client is None else []),
+            ],
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
+        resolved_agent_name: str = azure_ai_settings["agent_name"]  # type: ignore[assignment,typeddict-item]
+        resolved_agent_version: str = azure_ai_settings["agent_version"]  # type: ignore[assignment,typeddict-item]
+
         # If no project_client is provided, create one
         should_close_client = False
         if project_client is None:
-            resolved_endpoint = azure_ai_settings.get("project_endpoint")
-            if not resolved_endpoint:
-                raise ValueError(
-                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
-                )
+            resolved_endpoint: str = azure_ai_settings["project_endpoint"]  # type: ignore[assignment,typeddict-item]
 
             # Use provided credential
             if not credential:
@@ -215,29 +243,39 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             project_client = AIProjectClient(**project_client_kwargs)
             should_close_client = True
 
-        # Initialize parent
+        # Initialize parent through the Foundry hosted-agent path so raw OpenAI defaults
+        # do not try to resolve standalone OpenAI credentials for Azure AI execution.
         super().__init__(
+            "foundry_hosted_agent",
+            agent_name=resolved_agent_name,
+            credential=credential,
+            project_client=project_client,
+            project_endpoint=azure_ai_settings.get("project_endpoint"),
+            allow_preview=allow_preview,
             additional_properties=additional_properties,
         )
 
         # Initialize instance variables
-        self.agent_name = agent_name
-        self.agent_version = agent_version
+        self.details = details
+        self.agent_name = resolved_agent_name
+        self.agent_version = resolved_agent_version
+        self.agent_reference = {
+            "name": resolved_agent_name,
+            "version": resolved_agent_version,
+            "type": "agent_reference",
+        }
         self.agent_description = agent_description
         self.use_latest_version = use_latest_version
         self.project_client = project_client
         self.credential = credential
         self.model_id = azure_ai_settings.get("model_deployment_name")
         self.conversation_id = conversation_id
+        self.warn_on_ignored_runtime_options = warn_on_ignored_runtime_options
 
         # Track whether the application endpoint is used
         self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
         # Track whether we should close client connection
         self._should_close_client = should_close_client
-        # Track creation-time agent configuration for runtime mismatch warnings.
-        self.warn_runtime_tools_and_structure_changed = False
-        self._created_agent_tool_names: set[str] = set()
-        self._created_agent_structured_output_signature: str | None = None
 
     async def configure_azure_monitor(
         self,
@@ -339,174 +377,63 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Close the project_client."""
         await self._close_client_if_needed()
 
-    async def _get_agent_reference_or_create(
-        self,
-        run_options: dict[str, Any],
-        messages_instructions: str | None,
-        chat_options: Mapping[str, Any] | None = None,
-    ) -> dict[str, str]:
-        """Determine which agent to use and create if needed.
-
-        Args:
-            run_options: The prepared options for the API call.
-            messages_instructions: Instructions extracted from messages.
-            chat_options: The chat options containing response_format and other settings.
-
-        Returns:
-            dict[str, str]: The agent reference to use.
-        """
-        # Agent name must be explicitly provided by the user.
-        if self.agent_name is None:
-            raise ValueError(
-                "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
-                "or 'name' when initializing Agent."
-            )
-        # If the agent exists and we do not want to track agent configuration, return early
-        if self.agent_version is not None and not self.warn_runtime_tools_and_structure_changed:
-            return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
-
-        # If no agent_version is provided, either use latest version or create a new agent:
-        if self.agent_version is None:
-            # Try to use latest version if requested and agent exists
-            if self.use_latest_version:
-                with suppress(ResourceNotFoundError):
-                    existing_agent = await self.project_client.agents.get(self.agent_name)
-                    self.agent_version = existing_agent.versions.latest.version
-                    return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
-
-            if "model" not in run_options or not run_options["model"]:
-                raise ValueError(
-                    "Model deployment name is required for agent creation, "
-                    "can also be passed to the get_response methods."
-                )
-
-            args: dict[str, Any] = {"model": run_options["model"]}
-
-            if "tools" in run_options:
-                args["tools"] = run_options["tools"]
-            if "temperature" in run_options:
-                args["temperature"] = run_options["temperature"]
-            if "top_p" in run_options:
-                args["top_p"] = run_options["top_p"]
-            if "reasoning" in run_options:
-                args["reasoning"] = run_options["reasoning"]
-            if "rai_config" in run_options:
-                args["rai_config"] = run_options["rai_config"]
-
-            # response_format is accessed from chat_options or additional_properties
-            # since the base class excludes it from run_options
-            if chat_options and (response_format := chat_options.get("response_format")):
-                args["text"] = PromptAgentDefinitionTextOptions(format=create_text_format_config(response_format))
-
-            # Combine instructions from messages and options
-            # instructions is accessed from chat_options since the base class excludes it from run_options
-            combined_instructions = [
-                instructions
-                for instructions in [messages_instructions, chat_options.get("instructions") if chat_options else None]
-                if instructions
-            ]
-            if combined_instructions:
-                args["instructions"] = "".join(combined_instructions)
-
-            create_version_kwargs: dict[str, Any] = {
-                "agent_name": self.agent_name,
-                "definition": PromptAgentDefinition(**args),
-                "description": self.agent_description,
-            }
-
-            created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
-
-            self.agent_version = created_agent.version
-            self.warn_runtime_tools_and_structure_changed = True
-            self._created_agent_tool_names = self._extract_tool_names(run_options.get("tools"))
-            self._created_agent_structured_output_signature = self._get_structured_output_signature(chat_options)
-        return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
-
     async def _close_client_if_needed(self) -> None:
         """Close project_client session if we created it."""
         if self._should_close_client:
             await self.project_client.close()
 
-    def _extract_tool_names(self, tools: Any) -> set[str]:
-        """Extract comparable tool names from runtime tool payloads."""
+    def _validate_runtime_tools(self, tools: Any) -> None:
+        """Validate the runtime tools that AzureAIClient can honor."""
+        if tools is None:
+            return
         if not isinstance(tools, Sequence) or isinstance(tools, str | bytes):
-            return set()
-        tool_names: set[str] = set()
-        for tool_item in cast(Sequence[object], tools):
-            tool_names.add(self._get_tool_name(tool_item))
-        return tool_names
+            raise ValueError("AzureAIClient runtime tools must be provided as a sequence of FunctionTool instances.")
 
-    def _get_tool_name(self, tool: Any) -> str:
-        """Get a stable name for a tool for runtime comparison."""
-        if isinstance(tool, FunctionTool):
-            return tool.name
+        invalid_tools = [
+            type(tool).__name__ for tool in cast(Sequence[object], tools) if not isinstance(tool, FunctionTool)
+        ]
+        if invalid_tools:
+            invalid_tool_summary = ", ".join(sorted(set(invalid_tools)))
+            raise ValueError(
+                "AzureAIClient only supports runtime FunctionTool instances. "
+                f"Unsupported runtime tool types: {invalid_tool_summary}. "
+                "Configure hosted tools on the existing Azure AI agent instead."
+            )
 
-        if isinstance(tool, Mapping):
-            tool_type = tool.get("type")  # type: ignore[reportUnknownMemberType]
-            if tool_type == "function":
-                function_data = tool.get("function")  # type: ignore[reportUnknownMemberType]
-                if isinstance(function_data, Mapping) and (function_name := function_data.get("name")):  # type: ignore[assignment]
-                    return function_name  # type: ignore[no-any-return]
-            if tool_name := tool.get("name"):  # type: ignore[reportUnknownMemberType]
-                return tool_name  # type: ignore[no-any-return]
-            if server_label := tool.get("server_label"):  # type: ignore[reportUnknownMemberType]
-                return f"mcp:{server_label}"
-            if tool_type:
-                return tool_type  # type: ignore[no-any-return]
-            raise ValueError("Dict based tool definitions must include a 'name' property for runtime comparison.")
+    def _warn_if_runtime_overrides_ignored(
+        self,
+        *,
+        message_instructions: str | None,
+        chat_options: Mapping[str, Any] | None,
+    ) -> None:
+        """Warn when runtime options are ignored by AzureAIClient."""
+        if not self.warn_on_ignored_runtime_options:
+            return
 
-        if name_value := getattr(tool, "name", None):
-            return name_value  # type: ignore[no-any-return]
-        if server_label_value := getattr(tool, "server_label", None):
-            return f"mcp:{server_label_value}"
-        if tool_type_value := getattr(tool, "type", None):
-            return tool_type_value  # type: ignore[no-any-return]
-        return type(tool).__name__
+        ignored_option_names: list[str] = []
+        if message_instructions or (chat_options and chat_options.get("instructions") is not None):
+            ignored_option_names.append("instructions")
+        if chat_options and chat_options.get("response_format") is not None:
+            ignored_option_names.append("response_format")
 
-    def _get_structured_output_signature(self, chat_options: Mapping[str, Any] | None) -> str | None:
-        """Build a stable signature for structured_output/response_format values."""
-        if not chat_options:
-            return None
-        response_format = chat_options.get("response_format")
-        if response_format is None:
-            return None
-        if isinstance(response_format, type):
-            return f"{response_format.__module__}.{response_format.__qualname__}"
-        if isinstance(response_format, Mapping):
-            return json.dumps(response_format, sort_keys=True, default=str)
-        return str(response_format)
+        if ignored_option_names:
+            ignored_options = ", ".join(ignored_option_names)
+            logger.warning(
+                "AzureAIClient ignores runtime %s; configure them on the existing agent instead. "
+                "Set warn_on_ignored_runtime_options=False to disable this warning.",
+                ignored_options,
+            )
 
     def _remove_agent_level_run_options(
         self,
         run_options: dict[str, Any],
-        chat_options: Mapping[str, Any] | None = None,
     ) -> None:
         """Remove request-level options that Azure AI only supports at agent creation time."""
-        runtime_tools = run_options.get("tools")
-        runtime_structured_output = self._get_structured_output_signature(chat_options)
-
-        if runtime_tools is not None or runtime_structured_output is not None:
-            tools_changed = runtime_tools is not None
-            structured_output_changed = runtime_structured_output is not None
-
-            if self.warn_runtime_tools_and_structure_changed:
-                if runtime_tools is not None:
-                    tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
-                if runtime_structured_output is not None:
-                    structured_output_changed = (
-                        runtime_structured_output != self._created_agent_structured_output_signature
-                    )
-
-            if tools_changed or structured_output_changed:
-                logger.warning(
-                    "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-                    "Use AzureOpenAIResponsesClient instead."
-                )
-
         agent_level_option_to_run_keys = {
             "model_id": ("model",),
             "tools": ("tools",),
             "response_format": ("response_format", "text", "text_format"),
+            "instructions": ("instructions",),
             "rai_config": ("rai_config",),
             "temperature": ("temperature",),
             "top_p": ("top_p",),
@@ -526,7 +453,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
-        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
+        prepared_messages, message_instructions = self._prepare_messages_for_azure_ai(messages)
+        self._validate_runtime_tools(options.get("tools"))
+        self._warn_if_runtime_overrides_ignored(message_instructions=message_instructions, chat_options=options)
         run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
 
         # WORKAROUND: Azure AI Projects 'create responses' API has schema divergence from OpenAI's
@@ -539,11 +468,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         if not self._is_application_endpoint:
             # Application-scoped response APIs do not support "agent_reference" property.
-            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
-            run_options["extra_body"] = {"agent_reference": agent_reference}
+            run_options["extra_body"] = {"agent_reference": self.agent_reference}
 
         # Remove only keys that map to this client's declared options TypedDict.
-        self._remove_agent_level_run_options(run_options, options)
+        self._remove_agent_level_run_options(run_options)
 
         return run_options
 
@@ -905,6 +833,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
+    @deprecated(
+        "'AzureAIClient.get_code_interpreter_tool()' is deprecated; configure hosted tools directly "
+        "with the Azure AI Projects SDK instead.",
+    )
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
         file_ids: list[str | Content] | None = None,
@@ -912,6 +844,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
+
+        Deprecated: Configure hosted tools directly with the Azure AI Projects SDK instead.
 
         Keyword Args:
             file_ids: Optional list of file IDs or Content objects to make available to
@@ -941,6 +875,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
+    @deprecated(
+        "'AzureAIClient.get_file_search_tool()' is deprecated; configure hosted tools directly "
+        "with the Azure AI Projects SDK instead.",
+    )
     def get_file_search_tool(
         *,
         vector_store_ids: list[str],
@@ -950,6 +888,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         **kwargs: Any,
     ) -> ProjectsFileSearchTool:
         """Create a file search tool configuration for Azure AI Projects.
+
+        Deprecated: Configure hosted tools directly with the Azure AI Projects SDK instead.
 
         Keyword Args:
             vector_store_ids: List of vector store IDs to search.
@@ -985,6 +925,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         )
 
     @staticmethod
+    @deprecated(
+        "'AzureAIClient.get_web_search_tool()' is deprecated; configure hosted tools directly "
+        "with the Azure AI Projects SDK instead.",
+    )
     def get_web_search_tool(  # type: ignore[override]
         *,
         user_location: dict[str, str] | None = None,
@@ -992,6 +936,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         **kwargs: Any,
     ) -> WebSearchPreviewTool:
         """Create a web search preview tool configuration for Azure AI Projects.
+
+        Deprecated: Configure hosted tools directly with the Azure AI Projects SDK instead.
 
         Keyword Args:
             user_location: Location context for search results. Dict with keys like
@@ -1030,6 +976,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         return ws_tool
 
     @staticmethod
+    @deprecated(
+        "'AzureAIClient.get_image_generation_tool()' is deprecated; configure hosted tools directly "
+        "with the Azure AI Projects SDK instead.",
+    )
     def get_image_generation_tool(  # type: ignore[override]
         *,
         model: Literal["gpt-image-1"] | str | None = None,
@@ -1043,6 +993,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         **kwargs: Any,
     ) -> ImageGenTool:
         """Create an image generation tool configuration for Azure AI Projects.
+
+        Deprecated: Configure hosted tools directly with the Azure AI Projects SDK instead.
 
         Keyword Args:
             model: The model to use for image generation.
@@ -1079,6 +1031,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         )
 
     @staticmethod
+    @deprecated(
+        "'AzureAIClient.get_mcp_tool()' is deprecated; configure hosted tools directly "
+        "with the Azure AI Projects SDK instead.",
+    )
     def get_mcp_tool(
         *,
         name: str,
@@ -1095,6 +1051,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         This configures an MCP (Model Context Protocol) server that will be called
         by Azure AI's service. The tools from this MCP server are executed remotely
         by Azure AI, not locally by your application.
+
+        Deprecated: Configure hosted tools directly with the Azure AI Projects SDK instead.
 
         Note:
             For local MCP execution where your application calls the MCP server
@@ -1179,11 +1137,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Convert this chat client to a Agent.
 
         This method creates a Agent instance with this client pre-configured.
-        It does NOT create an agent on the Azure AI service - the actual agent
-        will be created on the server during the first invocation (run).
+        It does NOT create or update an agent on the Azure AI service.
 
-        For creating and managing persistent agents on the server, use
-        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+        Create or retrieve Azure AI agents separately through ``AIProjectClient.agents``,
+        then construct :class:`~agent_framework_azure_ai.AzureAIClient` with ``details``
+        or explicit ``agent_name`` and ``agent_version`` values.
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
@@ -1234,6 +1192,7 @@ class AzureAIClient(
         self,
         *,
         project_client: AIProjectClient | None = None,
+        details: AgentVersionDetails | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
         agent_description: str | None = None,
@@ -1243,6 +1202,7 @@ class AzureAIClient(
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         allow_preview: bool | None = None,
+        warn_on_ignored_runtime_options: bool = True,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -1253,24 +1213,35 @@ class AzureAIClient(
 
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
-            agent_name: The name to use when creating new agents or using existing agents.
+
+            details: Existing AgentVersionDetails to use directly instead of separate name/version values.
+
+            agent_name: The name of an existing agent to use.
+                Can also be set via environment variable AZURE_AI_AGENT_NAME.
             agent_version: The version of the agent to use.
-            agent_description: The description to use when creating new agents.
+                Can also be set via environment variable AZURE_AI_AGENT_VERSION.
+            agent_description: The description associated with the existing agent reference.
+
             conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
                 Ignored when a project_client is passed.
-            model_deployment_name: The model deployment name to use for agent creation.
+            model_deployment_name: The model deployment name associated with the existing agent.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             credential: Azure credential for authentication. Accepts a TokenCredential
                 or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
-            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
+
+            warn_on_ignored_runtime_options: Whether to warn when runtime instructions or
+                response_format values are ignored.
             additional_properties: Additional properties stored on the client instance.
+
             middleware: Optional sequence of chat middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
+
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -1282,13 +1253,17 @@ class AzureAIClient(
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_AI_AGENT_NAME=my-agent
+                # Set AZURE_AI_AGENT_VERSION=1
+                # Optional: set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
                 client = AzureAIClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
+                    agent_name="my-agent",
+                    agent_version="1",
                     model_deployment_name="gpt-4",
                     credential=credential,
                 )
@@ -1310,6 +1285,7 @@ class AzureAIClient(
         """
         super().__init__(
             project_client=project_client,
+            details=details,
             agent_name=agent_name,
             agent_version=agent_version,
             agent_description=agent_description,
@@ -1319,6 +1295,7 @@ class AzureAIClient(
             credential=credential,
             use_latest_version=use_latest_version,
             allow_preview=allow_preview,
+            warn_on_ignored_runtime_options=warn_on_ignored_runtime_options,
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,

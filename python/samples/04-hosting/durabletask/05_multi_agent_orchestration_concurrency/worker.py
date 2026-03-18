@@ -19,7 +19,8 @@ from collections.abc import Generator
 from typing import Any
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -43,7 +44,7 @@ def create_physicist_agent() -> "Agent":
     Returns:
         Agent: The configured Physicist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
@@ -55,7 +56,7 @@ def create_chemist_agent() -> "Agent":
     Returns:
         Agent: The configured Chemist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

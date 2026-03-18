@@ -19,7 +19,8 @@ from collections.abc import Generator
 from typing import Any, cast
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -64,7 +65,7 @@ def create_spam_agent() -> "Agent":
     Returns:
         Agent: The configured Spam Detection agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
@@ -76,7 +77,7 @@ def create_email_agent() -> "Agent":
     Returns:
         Agent: The configured Email Assistant agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

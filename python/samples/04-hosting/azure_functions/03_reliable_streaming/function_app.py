@@ -5,7 +5,7 @@
 This sample demonstrates how to implement reliable streaming for durable agents using Redis Streams.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create the travel planner agent with tools.
+- OpenAIChatClient to create the travel planner agent with tools.
 - AgentFunctionApp with a Redis-based callback for persistent streaming.
 - Custom HTTP endpoint to resume streaming from any point using cursor-based pagination.
 
@@ -26,8 +26,8 @@ from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
     AgentResponseCallbackProtocol,
-    AzureOpenAIChatClient,
 )
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
@@ -155,7 +155,7 @@ redis_callback = RedisStreamCallback()
 # Create the travel planner agent
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

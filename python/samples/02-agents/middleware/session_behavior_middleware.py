@@ -9,7 +9,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -81,7 +81,7 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=get_weather,

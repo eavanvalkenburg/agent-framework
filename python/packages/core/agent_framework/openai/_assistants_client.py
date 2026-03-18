@@ -58,7 +58,7 @@ from .._types import (
     UsageDetails,
 )
 from ..observability import ChatTelemetryLayer
-from ._shared import OpenAIConfigMixin, OpenAISettings
+from ._shared import OpenAIConfigMixin, OpenAISettings, normalize_openai_api_key
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -375,7 +375,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
         super().__init__(
             model_id=chat_model_id,
-            api_key=self._get_api_key(api_key_value),
+            api_key=normalize_openai_api_key(api_key_value),
             org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,

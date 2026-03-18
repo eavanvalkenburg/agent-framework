@@ -12,7 +12,9 @@ from ._embedding_client import (
     RawAzureAIInferenceEmbeddingClient,
 )
 from ._foundry_memory_provider import FoundryMemoryProvider
-from ._project_provider import AzureAIProjectAgentProvider
+from ._project_provider import (
+    AzureAIProjectAgentProvider as AzureAIProjectAgentProvider,  # pyright: ignore[reportDeprecated]
+)
 from ._shared import AzureAISettings
 
 try:

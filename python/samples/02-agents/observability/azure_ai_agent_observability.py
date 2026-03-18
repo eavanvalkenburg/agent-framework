@@ -46,7 +46,11 @@ async def main():
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-        AzureAIClient(project_client=project_client) as client,
+        AzureAIClient(
+            project_client=project_client,
+            agent_name=os.environ["AZURE_AI_AGENT_NAME"],
+            agent_version=os.environ["AZURE_AI_AGENT_VERSION"],
+        ) as client,
     ):
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.

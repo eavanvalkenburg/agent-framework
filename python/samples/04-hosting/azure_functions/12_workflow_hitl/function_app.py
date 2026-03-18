@@ -40,7 +40,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -379,7 +379,7 @@ class InputRouterExecutor(Executor):
 def _create_workflow() -> Workflow:
     """Create the content moderation workflow with HITL."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = OpenAIChatClient(backend="azure_openai", **client_kwargs)
 
     # Create the content analysis agent
     content_analyzer_agent = chat_client.as_agent(

@@ -62,8 +62,8 @@ For most use cases, use the fully-featured public client classes which already h
 
 - `OpenAIChatClient` - OpenAI Chat completions with all layers
 - `OpenAIResponsesClient` - OpenAI Responses API with all layers
-- `AzureOpenAIChatClient` - Azure OpenAI Chat with all layers
-- `AzureOpenAIResponsesClient` - Azure OpenAI Responses with all layers
+- `OpenAIChatClient` - Azure OpenAI Chat with all layers
+- `OpenAIResponsesClient` - Azure OpenAI Responses with all layers
 - `AzureAIClient` - Azure AI Project with all layers
 
 These clients handle the layer composition correctly and provide the full feature set out of the box.

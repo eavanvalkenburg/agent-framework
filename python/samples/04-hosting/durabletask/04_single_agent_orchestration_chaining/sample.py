@@ -7,7 +7,7 @@ orchestration while preserving the conversation state between runs. The orchestr
 runs the writer agent sequentially on a shared thread to refine text iteratively.
 
 Components used:
-- AzureOpenAIChatClient to construct the writer agent
+- OpenAIChatClient to construct the writer agent
 - DurableTaskSchedulerWorker and DurableAIAgentWorker for agent hosting
 - DurableTaskSchedulerClient and orchestration for sequential agent invocations
 - Thread management to maintain conversation context across invocations

@@ -21,7 +21,7 @@ Key concepts:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for AzureOpenAIResponsesClient
+- Environment variables configured for OpenAIResponsesClient
 """
 
 import asyncio
@@ -31,7 +31,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -47,9 +47,10 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
@@ -92,9 +93,10 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
@@ -139,9 +141,10 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

@@ -27,7 +27,7 @@ import os
 from typing import Any
 
 from agent_framework import Content, FunctionTool, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -51,9 +51,10 @@ get_user_location = FunctionTool(
 
 
 async def main() -> None:
-    agent = AzureOpenAIResponsesClient(
+    agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="WeatherBot",

@@ -25,9 +25,12 @@ from typing import (
     NoReturn,
     TypedDict,
     cast,
+    overload,
 )
+from urllib.parse import urljoin, urlparse
 
 from openai import AsyncOpenAI, BadRequestError
+from openai.lib.azure import AsyncAzureOpenAI
 from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -50,7 +53,8 @@ from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._middleware import ChatMiddlewareLayer
-from .._settings import load_settings
+from .._settings import load_settings, resolve_backend_setting
+from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from .._tools import (
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
@@ -76,13 +80,28 @@ from .._types import (
     prepend_instructions_to_messages,
     validate_tool_mode,
 )
+from ..azure._entra_id_authentication import (
+    AzureCredentialTypes,
+    AzureTokenProvider,
+    resolve_credential_to_token_provider,
+)
+from ..azure._shared import _apply_azure_defaults  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
 )
 from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
+from ._shared import (
+    OpenAIResponsesBackend,
+    OpenAISettings,
+    create_openai_client,
+    create_openai_client_from_project,
+    load_azure_openai_settings,
+    normalize_openai_api_key,
+    resolve_responses_model_id,
+    serialize_openai_default_headers,
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -237,7 +256,6 @@ OpenAIResponsesOptionsT = TypeVar(
 
 
 class RawOpenAIResponsesClient(  # type: ignore[misc]
-    OpenAIBase,
     BaseChatClient[OpenAIResponsesOptionsT],
     Generic[OpenAIResponsesOptionsT],
 ):
@@ -256,9 +274,377 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
 
+    INJECTABLE: ClassVar[set[str]] = {"client"}
+
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     FILE_SEARCH_MAX_RESULTS: int = 50
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["openai"] | None = None,
+        *,
+        model_id: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        client: AsyncOpenAI | None = None,
+    ) -> None:
+        """Initialize a raw OpenAI Responses client.
+
+        Args:
+            backend: Optional backend override. Defaults to the standard OpenAI Responses service.
+
+        Keyword Args:
+            model_id: OpenAI model name.
+            api_key: OpenAI API key override.
+            org_id: OpenAI organization ID override.
+            base_url: OpenAI base URL override.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+            additional_properties: Additional serialized client properties.
+            client: Existing AsyncOpenAI client to use when injecting the raw client directly.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["azure_openai"],
+        *,
+        model_id: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        token_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        client: AsyncOpenAI | None = None,
+    ) -> None:
+        """Initialize a raw Azure OpenAI Responses client.
+
+        Args:
+            backend: Backend selector for Azure OpenAI responses requests.
+
+        Keyword Args:
+            model_id: Azure OpenAI responses deployment name.
+            api_key: Azure OpenAI API key override.
+            base_url: Azure OpenAI base URL override.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            endpoint: Azure OpenAI endpoint override.
+            api_version: Azure OpenAI API version override.
+            token_endpoint: Azure token scope override.
+            credential: Azure credential or token provider.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+            additional_properties: Additional serialized client properties.
+            client: Existing AsyncOpenAI client to use when injecting the raw client directly.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["foundry"],
+        *,
+        model_id: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        allow_preview: bool | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        client: AsyncOpenAI | None = None,
+    ) -> None:
+        """Initialize a raw Azure AI Foundry deployment-backed Responses client.
+
+        Args:
+            backend: Backend selector for Foundry deployment-backed responses requests.
+
+        Keyword Args:
+            model_id: Foundry deployment name for the Responses API.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            credential: Azure credential or token provider used to create a project client.
+            project_client: Existing Azure AI Foundry project client.
+            project_endpoint: Azure AI Foundry project endpoint override.
+            allow_preview: Preview opt-in when creating an internal Foundry project client.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+            additional_properties: Additional serialized client properties.
+            client: Existing AsyncOpenAI client to use when injecting the raw client directly.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["foundry_hosted_agent"],
+        *,
+        agent_name: str,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        allow_preview: bool | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        client: AsyncOpenAI | None = None,
+    ) -> None:
+        """Initialize a raw Azure AI Foundry hosted-agent Responses client.
+
+        Args:
+            backend: Backend selector for Foundry hosted-agent responses requests.
+
+        Keyword Args:
+            agent_name: Hosted-agent name to invoke.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            credential: Azure credential or token provider used to create a project client.
+            project_client: Existing Azure AI Foundry project client.
+            project_endpoint: Azure AI Foundry project endpoint override.
+            allow_preview: Preview opt-in when creating an internal Foundry project client.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+            additional_properties: Additional serialized client properties.
+            client: Existing AsyncOpenAI client to use when injecting the raw client directly.
+        """
+        ...
+
+    def __init__(
+        self,
+        backend: OpenAIResponsesBackend | None = None,
+        *,
+        model_id: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        token_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        agent_name: str | None = None,
+        allow_preview: bool | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        client: AsyncOpenAI | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the raw OpenAI responses client."""
+        resolved_backend = resolve_backend_setting(
+            backend=backend,
+            env_var_name="OPENAI_RESPONSES_BACKEND",
+            default_backend="openai",
+            allowed_backends=("openai", "azure_openai", "foundry", "foundry_hosted_agent"),
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        resolved_client = async_client or client
+        self.agent_name: str | None = None
+        self.agent_reference: dict[str, str] | None = None
+
+        if resolved_backend in {"foundry", "foundry_hosted_agent"}:
+            foundry_backend: Literal["foundry", "foundry_hosted_agent"] = resolved_backend  # type: ignore[assignment]
+            from agent_framework.azure import AzureAISettings
+
+            azure_ai_settings = load_settings(
+                AzureAISettings,
+                env_prefix="AZURE_AI_",
+                project_endpoint=project_endpoint,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            resolved_allow_preview = (
+                True if foundry_backend == "foundry_hosted_agent" and allow_preview is None else allow_preview
+            )
+            if resolved_client is None:
+                resolved_client = create_openai_client_from_project(
+                    project_client=project_client,
+                    project_endpoint=azure_ai_settings.get("project_endpoint"),
+                    credential=credential,
+                    allow_preview=resolved_allow_preview,
+                )
+
+            self.org_id = None
+            self.base_url = str(base_url)
+            self.default_headers = serialize_openai_default_headers(default_headers)
+            self.backend = foundry_backend
+            self.project_endpoint = azure_ai_settings.get("project_endpoint")
+            if foundry_backend == "foundry_hosted_agent":
+                if model_id is not None:
+                    raise ValueError(
+                        "model_id is not supported when backend='foundry_hosted_agent'; "
+                        "hosted agents are addressed by agent_name."
+                    )
+                if not agent_name:
+                    raise ValueError("agent_name is required when backend='foundry_hosted_agent'.")
+                self.agent_name = agent_name
+                self.agent_reference = {"name": agent_name, "type": "agent_reference"}
+                model_id = None
+            else:
+                foundry_model_id = resolve_responses_model_id(
+                    model_id=model_id,
+                    backend=foundry_backend,
+                    env_file_path=env_file_path,
+                    env_file_encoding=env_file_encoding,
+                )
+                if not foundry_model_id:
+                    raise ValueError(
+                        "Foundry deployment name is required. "
+                        "Set via 'model_id', 'RESPONSES_DEPLOYMENT_NAME', or "
+                        "'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME'."
+                    )
+                self.deployment_name = foundry_model_id
+                model_id = foundry_model_id
+        elif resolved_backend == "azure_openai":
+            azure_openai_settings = load_azure_openai_settings(
+                api_key=api_key if isinstance(api_key, str) else None,
+                base_url=base_url,
+                endpoint=endpoint,
+                api_version=api_version,
+                token_endpoint=token_endpoint,
+                responses_deployment_name=resolve_responses_model_id(
+                    model_id=model_id,
+                    backend=resolved_backend,
+                    env_file_path=env_file_path,
+                    env_file_encoding=env_file_encoding,
+                ),
+                required_fields=["responses_deployment_name"],
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            _apply_azure_defaults(azure_openai_settings, default_api_version="preview")
+
+            endpoint_value = azure_openai_settings.get("endpoint")
+            if (
+                not azure_openai_settings.get("base_url")
+                and endpoint_value
+                and (hostname := urlparse(str(endpoint_value)).hostname)
+                and hostname.endswith(".openai.azure.com")
+            ):
+                azure_openai_settings["base_url"] = urljoin(str(endpoint_value), "/openai/v1/")
+
+            responses_deployment_name: str = azure_openai_settings["responses_deployment_name"]  # type: ignore[assignment,typeddict-item]
+
+            if resolved_client is None:
+                api_key_secret = azure_openai_settings.get("api_key")
+                api_key_value = api_key_secret.get_secret_value() if api_key_secret is not None else None
+                azure_ad_token_provider = None
+                if api_key_value is None and credential is not None:
+                    azure_ad_token_provider = resolve_credential_to_token_provider(
+                        credential,
+                        azure_openai_settings.get("token_endpoint"),
+                    )
+
+                if api_key_value is None and azure_ad_token_provider is None:
+                    raise ValueError(
+                        "Azure OpenAI authentication is required. Provide 'api_key', 'credential', or 'async_client'."
+                    )
+
+                resolved_base_url = azure_openai_settings.get("base_url")
+                resolved_endpoint = azure_openai_settings.get("endpoint")
+                if resolved_base_url is None and resolved_endpoint is None:
+                    raise ValueError(
+                        "Azure OpenAI endpoint configuration is required. "
+                        "Provide 'endpoint', 'base_url', or 'async_client'."
+                    )
+
+                merged_headers = dict(default_headers) if default_headers else {}
+                if APP_INFO:
+                    merged_headers.update(APP_INFO)
+                    merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+
+                client_kwargs: dict[str, Any] = {"default_headers": merged_headers}
+                if api_key_value is not None:
+                    client_kwargs["api_key"] = api_key_value
+                if azure_ad_token_provider is not None:
+                    client_kwargs["azure_ad_token_provider"] = azure_ad_token_provider
+                if resolved_base_url is not None:
+                    client_kwargs["base_url"] = str(resolved_base_url)
+                elif resolved_endpoint is not None:
+                    client_kwargs["azure_endpoint"] = str(resolved_endpoint)
+                if (resolved_api_version := azure_openai_settings.get("api_version")) is not None:
+                    client_kwargs["api_version"] = resolved_api_version
+                resolved_client = AsyncAzureOpenAI(**client_kwargs)
+
+            self.org_id = None
+            self.base_url = str(azure_openai_settings.get("base_url"))
+            self.default_headers = serialize_openai_default_headers(default_headers)
+            self.backend = resolved_backend
+            self.deployment_name = responses_deployment_name
+            self.endpoint = azure_openai_settings.get("endpoint")
+            self.api_version = azure_openai_settings.get("api_version")
+            self.token_endpoint = azure_openai_settings.get("token_endpoint")
+            model_id = responses_deployment_name
+        else:
+            openai_settings = load_settings(
+                OpenAISettings,
+                env_prefix="OPENAI_",
+                api_key=api_key,
+                org_id=org_id,
+                base_url=base_url,
+                responses_model_id=model_id,
+                required_fields=["responses_model_id", *([] if resolved_client else ["api_key"])],
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+
+            api_key_setting = openai_settings["api_key"] if resolved_client is None else openai_settings.get("api_key")  # type: ignore[typeddict-item]
+            responses_model_id: str = openai_settings["responses_model_id"]  # type: ignore[assignment,typeddict-item]
+            org_id_value = openai_settings.get("org_id")
+            base_url_value = openai_settings.get("base_url")
+            resolved_client = create_openai_client(
+                api_key=normalize_openai_api_key(api_key_setting),
+                org_id=org_id_value,
+                default_headers=default_headers,
+                client=resolved_client,
+                base_url=base_url_value,
+            )
+
+            self.org_id = org_id_value
+            self.base_url = str(base_url_value)
+            self.default_headers = serialize_openai_default_headers(default_headers)
+            self.backend = resolved_backend
+            model_id = responses_model_id
+
+        self.client = resolved_client
+        self.model_id = model_id.strip() if model_id else None
+        if instruction_role is not None:
+            self.instruction_role = instruction_role
+        super().__init__(additional_properties=additional_properties, **kwargs)
 
     # region Inner Methods
 
@@ -273,10 +659,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         Returns:
             Tuple of (client, run_options, validated_options).
         """
-        client = await self._ensure_client()
         validated_options = await self._validate_options(options)
         run_options = await self._prepare_options(messages, validated_options, **kwargs)
-        return client, run_options, validated_options
+        return self.client, run_options, validated_options
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
         """Convert exceptions to appropriate service exceptions. Always raises."""
@@ -309,10 +694,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 nonlocal validated_options
                 if continuation_token is not None:
                     # Resume a background streaming response by retrieving with stream=True
-                    client = await self._ensure_client()
                     validated_options = await self._validate_options(options)
                     try:
-                        stream_response = await client.responses.retrieve(
+                        stream_response = await self.client.responses.retrieve(
                             continuation_token["response_id"],
                             stream=True,
                         )
@@ -356,10 +740,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         async def _get_response() -> ChatResponse:
             if continuation_token is not None:
                 # Poll a background response by retrieving without stream
-                client = await self._ensure_client()
                 validated_options = await self._validate_options(options)
                 try:
-                    response = await client.responses.retrieve(continuation_token["response_id"])
+                    response = await self.client.responses.retrieve(continuation_token["response_id"])
                 except Exception as ex:
                     self._handle_request_error(ex)
                 return self._parse_response_from_openai(response, options=validated_options)
@@ -952,6 +1335,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             if old_key in run_options and old_key != new_key:
                 run_options[new_key] = run_options.pop(old_key)
 
+        if self.backend == "foundry_hosted_agent":
+            run_options.pop("model", None)
+            run_options.pop("model_id", None)
+
         # Handle different conversation ID formats
         if conversation_id := self._get_current_conversation_id(options, **kwargs):
             if conversation_id.startswith("resp_"):
@@ -995,15 +1382,35 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if response_format:
             run_options["text_format"] = response_format
 
+        if (agent_reference := self.agent_reference) is not None:
+            extra_body = run_options.get("extra_body")
+            if extra_body is None:
+                run_options["extra_body"] = {"agent_reference": agent_reference}
+            elif isinstance(extra_body, Mapping):
+                extra_body_dict: dict[str, Any] = dict(extra_body)  # type: ignore[arg-type]
+                existing_reference = extra_body_dict.get("agent_reference")
+                if existing_reference is not None and existing_reference != agent_reference:
+                    raise ChatClientInvalidRequestException(
+                        "extra_body.agent_reference cannot override the configured hosted agent reference."
+                    )
+                extra_body_dict["agent_reference"] = agent_reference
+                run_options["extra_body"] = extra_body_dict
+            else:
+                raise ChatClientInvalidRequestException("extra_body must be a mapping when using hosted agents.")
+
         return run_options
 
     def _check_model_presence(self, options: dict[str, Any]) -> None:
         """Check if the 'model' param is present, and if not raise a Error.
 
-        Since AzureAIClients use a different param for this, this method is overridden in those clients.
+        Azure-backed compatibility shims still surface this as ``deployment_name`` in error messages.
         """
         if not options.get("model"):
+            if self.backend == "foundry_hosted_agent":
+                return
             if not self.model_id:
+                if self.backend in {"azure_openai", "foundry"}:
+                    raise ValueError("deployment_name must be a non-empty string")
                 raise ValueError("model_id must be a non-empty string")
             options["model"] = self.model_id
 
@@ -2246,7 +2653,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 
 class OpenAIResponsesClient(  # type: ignore[misc]
-    OpenAIConfigMixin,
     ChatMiddlewareLayer[OpenAIResponsesOptionsT],
     FunctionInvocationLayer[OpenAIResponsesOptionsT],
     ChatTelemetryLayer[OpenAIResponsesOptionsT],
@@ -2255,8 +2661,10 @@ class OpenAIResponsesClient(  # type: ignore[misc]
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
+    @overload
     def __init__(
         self,
+        backend: Literal["openai"] | None = None,
         *,
         model_id: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
@@ -2265,35 +2673,236 @@ class OpenAIResponsesClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
         middleware: (
             Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an OpenAI Responses client.
+
+        Args:
+            backend: Optional backend override. Defaults to the standard OpenAI Responses service.
+
+        Keyword Args:
+            model_id: OpenAI model name.
+            api_key: OpenAI API key override.
+            org_id: OpenAI organization ID override.
+            base_url: OpenAI base URL override.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["azure_openai"],
+        *,
+        model_id: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        token_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        middleware: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure OpenAI Responses client.
+
+        Args:
+            backend: Backend selector for Azure OpenAI responses requests.
+
+        Keyword Args:
+            model_id: Azure OpenAI responses deployment name.
+            api_key: Azure OpenAI API key override.
+            base_url: Azure OpenAI base URL override.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            endpoint: Azure OpenAI endpoint override.
+            api_version: Azure OpenAI API version override.
+            token_endpoint: Azure token scope override.
+            credential: Azure credential or token provider.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["foundry"],
+        *,
+        model_id: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        allow_preview: bool | None = None,
+        middleware: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure AI Foundry deployment-backed Responses client.
+
+        Args:
+            backend: Backend selector for Foundry deployment-backed responses requests.
+
+        Keyword Args:
+            model_id: Foundry deployment name for the Responses API.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            credential: Azure credential or token provider used to create a project client.
+            project_client: Existing Azure AI Foundry project client.
+            project_endpoint: Azure AI Foundry project endpoint override.
+            allow_preview: Preview opt-in when creating an internal Foundry project client.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["foundry_hosted_agent"],
+        *,
+        agent_name: str,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        allow_preview: bool | None = None,
+        middleware: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure AI Foundry hosted-agent Responses client.
+
+        Args:
+            backend: Backend selector for Foundry hosted-agent responses requests.
+
+        Keyword Args:
+            agent_name: Hosted-agent name to invoke.
+            default_headers: Default HTTP headers to apply to requests.
+            async_client: Existing AsyncOpenAI client to use.
+            instruction_role: Role to use for instruction messages.
+            credential: Azure credential or token provider used to create a project client.
+            project_client: Existing Azure AI Foundry project client.
+            project_endpoint: Azure AI Foundry project endpoint override.
+            allow_preview: Preview opt-in when creating an internal Foundry project client.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Environment settings file fallback path.
+            env_file_encoding: Environment settings file encoding.
+        """
+        ...
+
+    def __init__(
+        self,
+        backend: OpenAIResponsesBackend | None = None,
+        *,
+        model_id: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        token_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
+        agent_name: str | None = None,
+        allow_preview: bool | None = None,
+        middleware: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
+        Args:
+            backend: Backend to use for responses requests.
+                Can also be set via environment variable OPENAI_RESPONSES_BACKEND.
+
         Keyword Args:
             model_id: OpenAI model name, see https://platform.openai.com/docs/models.
-                Can also be set via environment variable OPENAI_RESPONSES_MODEL_ID.
+                Can also be set via environment variable OPENAI_RESPONSES_MODEL_ID for ``backend="openai"``.
+                For ``backend="azure_openai"`` and ``backend="foundry"``, RESPONSES_DEPLOYMENT_NAME is checked first,
+                then AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
             api_key: The API key to use. If provided will override the env vars or .env file value.
-                Can also be set via environment variable OPENAI_API_KEY.
+                Can also be set via environment variable OPENAI_API_KEY for ``backend="openai"``
+                or AZURE_OPENAI_API_KEY for ``backend="azure_openai"``.
             org_id: The org ID to use. If provided will override the env vars or .env file value.
                 Can also be set via environment variable OPENAI_ORG_ID.
             base_url: The base URL to use. If provided will override the standard value.
-                Can also be set via environment variable OPENAI_BASE_URL.
+                Can also be set via environment variable OPENAI_BASE_URL for ``backend="openai"``
+                or AZURE_OPENAI_BASE_URL for ``backend="azure_openai"``.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
             instruction_role: The role to use for 'instruction' messages, for example,
                 "system" or "developer". If not provided, the default is "system".
+
+            endpoint: Azure OpenAI endpoint override for the ``azure_openai`` backend.
+                Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
+            api_version: Azure OpenAI API version override for the ``azure_openai`` backend.
+                Can also be set via environment variable OPENAI_API_VERSION.
+                The deprecated compatibility alias AZURE_OPENAI_API_VERSION is also checked.
+            token_endpoint: Azure token scope override for the ``azure_openai`` backend.
+                Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
+            credential: Azure credential or token provider for Azure-backed backends.
+
+            project_client: Existing Foundry ``AIProjectClient`` to use for the ``foundry`` backend.
+
+            project_endpoint: Foundry project endpoint override for the ``foundry`` or
+                ``foundry_hosted_agent`` backend.
+                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+            agent_name: Hosted-agent name for the ``foundry_hosted_agent`` backend.
+            allow_preview: Enables preview opt-in when creating an internal Foundry ``AIProjectClient``.
+                For ``foundry_hosted_agent``, internally created project clients default to preview-enabled.
+
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
+
             kwargs: Other keyword parameters.
 
         Examples:
@@ -2324,37 +2933,25 @@ class OpenAIResponsesClient(  # type: ignore[misc]
                 client: OpenAIResponsesClient[MyOptions] = OpenAIResponsesClient(model_id="gpt-4o")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        openai_settings = load_settings(
-            OpenAISettings,
-            env_prefix="OPENAI_",
+        super().__init__(
+            model_id=model_id,
+            backend=backend,
             api_key=api_key,
             org_id=org_id,
             base_url=base_url,
-            responses_model_id=model_id,
+            default_headers=default_headers,
+            async_client=async_client,
+            instruction_role=instruction_role,
+            endpoint=endpoint,
+            api_version=api_version,
+            token_endpoint=token_endpoint,
+            credential=credential,
+            project_client=project_client,
+            project_endpoint=project_endpoint,
+            agent_name=agent_name,
+            allow_preview=allow_preview,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-        )
-
-        api_key_setting = openai_settings.get("api_key")
-        if not async_client and not api_key_setting:
-            raise ValueError(
-                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
-            )
-        responses_model_id = openai_settings.get("responses_model_id")
-        if not responses_model_id:
-            raise ValueError(
-                "OpenAI model ID is required. "
-                "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
-            )
-
-        super().__init__(
-            model_id=responses_model_id,
-            api_key=self._get_api_key(api_key_setting),
-            org_id=openai_settings.get("org_id"),
-            default_headers=default_headers,
-            client=async_client,
-            instruction_role=instruction_role,
-            base_url=openai_settings.get("base_url"),
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,

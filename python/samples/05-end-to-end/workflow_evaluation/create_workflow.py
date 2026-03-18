@@ -56,7 +56,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -74,7 +74,7 @@ async def start_executor(input: str, ctx: WorkflowContext[list[Message]]) -> Non
 class ResearchLead(Executor):
     """Aggregates and summarizes travel planning findings from all specialized agents."""
 
-    def __init__(self, client: AzureOpenAIResponsesClient, id: str = "travel-planning-coordinator"):
+    def __init__(self, client: OpenAIResponsesClient, id: str = "travel-planning-coordinator"):
         # Use default_options to persist conversation history for evaluation.
         self.agent = client.as_agent(
             id="travel-planning-coordinator",
@@ -143,13 +143,13 @@ class ResearchLead(Executor):
 
 
 async def run_workflow_with_response_tracking(
-    query: str, client: AzureOpenAIResponsesClient | None = None, deployment_name: str | None = None
+    query: str, client: OpenAIResponsesClient | None = None, deployment_name: str | None = None
 ) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
 
     Args:
         query: The user query to process through the multi-agent workflow
-        client: Optional AzureOpenAIResponsesClient instance
+        client: Optional OpenAIResponsesClient instance
         deployment_name: Optional model deployment name for the workflow agents
 
     Returns:
@@ -164,7 +164,9 @@ async def run_workflow_with_response_tracking(
                 )
 
                 async with project_client:
-                    client = AzureOpenAIResponsesClient(project_client=project_client, deployment_name=deployment_name)
+                    client = OpenAIResponsesClient(
+                        backend="foundry", project_client=project_client, model_id=deployment_name
+                    )
                     return await _run_workflow_with_client(query, client)
         except Exception as e:
             print(f"Error during workflow execution: {e}")
@@ -173,7 +175,7 @@ async def run_workflow_with_response_tracking(
         return await _run_workflow_with_client(query, client)
 
 
-async def _run_workflow_with_client(query: str, client: AzureOpenAIResponsesClient) -> dict:
+async def _run_workflow_with_client(query: str, client: OpenAIResponsesClient) -> dict:
     """Execute workflow with given client and track all interactions."""
 
     # Initialize tracking variables - use lists to track multiple responses per agent
@@ -205,10 +207,10 @@ async def _run_workflow_with_client(query: str, client: AzureOpenAIResponsesClie
     }
 
 
-async def _create_workflow(client: AzureOpenAIResponsesClient):
+async def _create_workflow(client: OpenAIResponsesClient):
     """Create the multi-agent travel planning workflow with specialized agents.
 
-    Uses a single shared AzureOpenAIResponsesClient for all agents.
+    Uses a single shared OpenAIResponsesClient for all agents.
     """
 
     final_coordinator = ResearchLead(client=client, id="final-coordinator")
@@ -356,7 +358,7 @@ async def create_and_run_workflow(deployment_name: str | None = None):
     query = example_queries[0]
     print(f"Query: {query}\n")
 
-    result = await run_workflow_with_response_tracking(query, deployment_name=deployment_name)
+    result = await run_workflow_with_response_tracking(query, model_id=deployment_name)
 
     # Create output data structure
     output_data = {"agents": {}, "query": result["query"], "output": result.get("output", "")}

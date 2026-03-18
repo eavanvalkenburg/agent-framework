@@ -18,7 +18,7 @@ Demonstrate:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -32,7 +32,7 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -93,9 +93,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

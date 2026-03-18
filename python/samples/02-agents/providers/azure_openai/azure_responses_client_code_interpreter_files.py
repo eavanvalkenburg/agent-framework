@@ -5,7 +5,7 @@ import os
 import tempfile
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
@@ -80,7 +80,7 @@ async def main() -> None:
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
     # Create agent using Azure OpenAI Responses client
-    client = AzureOpenAIResponsesClient(credential=credential)
+    client = OpenAIResponsesClient(backend="azure_openai", credential=credential)
 
     # Create code interpreter tool with file access
     code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])

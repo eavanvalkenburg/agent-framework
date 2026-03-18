@@ -18,7 +18,7 @@ Demonstrate:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -32,7 +32,7 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -41,7 +41,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Store chat client at module level for aggregator access
-_chat_client: AzureOpenAIResponsesClient | None = None
+_chat_client: OpenAIResponsesClient | None = None
 
 
 async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
@@ -148,9 +148,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     global _chat_client
-    _chat_client = AzureOpenAIResponsesClient(
+    _chat_client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

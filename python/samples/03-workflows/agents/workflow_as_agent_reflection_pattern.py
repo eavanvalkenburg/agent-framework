@@ -14,7 +14,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -40,7 +40,7 @@ Key Concepts Demonstrated:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
+- OpenAI account configured and accessible for OpenAIResponsesClient.
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.
 """
@@ -195,17 +195,19 @@ async def main() -> None:
     print("Building workflow with Worker ↔ Reviewer cycle...")
     worker = Worker(
         id="worker",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
     reviewer = Reviewer(
         id="reviewer",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )

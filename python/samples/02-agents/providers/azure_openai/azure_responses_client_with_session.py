@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -40,7 +40,7 @@ async def example_with_automatic_session_creation() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -69,7 +69,7 @@ async def example_with_session_persistence_in_memory() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -110,7 +110,7 @@ async def example_with_existing_session_id() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -132,7 +132,7 @@ async def example_with_existing_session_id() -> None:
         print("\n--- Continuing with the same session ID in a new agent instance ---")
 
         agent = Agent(
-            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+            client=OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )

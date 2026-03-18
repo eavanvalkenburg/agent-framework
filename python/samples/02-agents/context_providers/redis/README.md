@@ -51,7 +51,7 @@ See quickstart: `https://learn.microsoft.com/azure/redis/quickstart-create-manag
 
 ### Environment variables
 
-- `AZURE_AI_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `AzureOpenAIResponsesClient`
+- `AZURE_AI_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `OpenAIResponsesClient`
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` (required): Azure OpenAI Responses deployment name
 - `OPENAI_API_KEY` (optional): Required only if you set `vectorizer_choice="openai"` to enable hybrid search.
 
@@ -73,7 +73,7 @@ The provider supports both full‑text only and hybrid vector search:
 2. Agent integration: teaches the agent a preference and verifies it is remembered across turns.
 3. Agent + tool: calls a sample tool (flight search) and then asks the agent to recall details remembered from the tool output.
 
-It uses `AzureOpenAIResponsesClient` (Foundry project endpoint setup) for chat and, in some steps, optional OpenAI embeddings for hybrid search.
+It uses `OpenAIResponsesClient` (Foundry project endpoint setup) for chat and, in some steps, optional OpenAI embeddings for hybrid search.
 
 ## How to run
 

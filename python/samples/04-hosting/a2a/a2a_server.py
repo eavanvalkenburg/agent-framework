@@ -10,7 +10,7 @@ from a2a.server.request_handlers.default_request_handler import DefaultRequestHa
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
 from agent_executor import AgentFrameworkExecutor
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -78,9 +78,10 @@ def main() -> None:
 
     # Create the LLM client
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=project_endpoint,
-        deployment_name=deployment_name,
+        model_id=deployment_name,
         credential=credential,
     )
 

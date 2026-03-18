@@ -11,6 +11,8 @@ from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
 
 from agent_framework.azure import AzureOpenAIEmbeddingClient
+from agent_framework.azure._shared import AzureOpenAIConfigMixin
+from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.openai import OpenAIEmbeddingOptions
 
 
@@ -62,8 +64,12 @@ def test_azure_construction_with_existing_client(azure_embedding_unit_test_env: 
     assert client.client is mock_client
 
 
+def test_azure_embedding_mro_excludes_azure_config_mixin() -> None:
+    assert AzureOpenAIConfigMixin not in AzureOpenAIEmbeddingClient.__mro__
+
+
 def test_azure_construction_missing_deployment_name_raises(azure_embedding_unit_test_env: None) -> None:
-    with pytest.raises(ValueError, match="deployment name is required"):
+    with pytest.raises(SettingNotFoundError, match="embedding_deployment_name"):
         AzureOpenAIEmbeddingClient(
             api_key="test-key",
             endpoint="https://test.openai.azure.com/",

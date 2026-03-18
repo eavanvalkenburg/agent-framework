@@ -13,7 +13,7 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for OpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use DefaultAzureCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -33,7 +33,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -198,7 +198,7 @@ def _build_client_kwargs() -> dict[str, Any]:
 def _create_workflow() -> Workflow:
     """Create the email classification workflow with conditional routing."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = OpenAIChatClient(backend="azure_openai", **client_kwargs)
 
     spam_detection_agent = chat_client.as_agent(
         instructions=(

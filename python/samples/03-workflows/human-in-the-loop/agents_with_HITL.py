@@ -18,7 +18,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -43,7 +43,7 @@ Demonstrates:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -168,9 +168,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
     # Create the agents
-    writer_agent = AzureOpenAIResponsesClient(
+    writer_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="writer_agent",
@@ -178,9 +179,10 @@ async def main() -> None:
         tool_choice="required",
     )
 
-    final_editor_agent = AzureOpenAIResponsesClient(
+    final_editor_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="final_editor_agent",

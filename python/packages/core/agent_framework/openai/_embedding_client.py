@@ -6,7 +6,7 @@ import base64
 import struct
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 
 from openai import AsyncOpenAI
 
@@ -14,7 +14,7 @@ from .._clients import BaseEmbeddingClient
 from .._settings import load_settings
 from .._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from ..observability import EmbeddingTelemetryLayer
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
+from ._shared import OpenAISettings, create_openai_client, normalize_openai_api_key, serialize_openai_default_headers
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -52,11 +52,24 @@ OpenAIEmbeddingOptionsT = TypeVar(
 
 
 class RawOpenAIEmbeddingClient(
-    OpenAIBase,
     BaseEmbeddingClient[str, list[float], OpenAIEmbeddingOptionsT],
     Generic[OpenAIEmbeddingOptionsT],
 ):
     """Raw OpenAI embedding client without telemetry."""
+
+    INJECTABLE: ClassVar[set[str]] = {"client"}
+
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        client: AsyncOpenAI,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize the raw OpenAI embedding client."""
+        self.client = client
+        self.model_id = model_id.strip() if model_id else None
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
@@ -96,7 +109,7 @@ class RawOpenAIEmbeddingClient(
         if user := opts.get("user"):
             kwargs["user"] = user
 
-        response = await (await self._ensure_client()).embeddings.create(**kwargs)
+        response = await self.client.embeddings.create(**kwargs)
 
         encoding = kwargs.get("encoding_format", "float")
         embeddings: list[Embedding[list[float]]] = []
@@ -127,7 +140,6 @@ class RawOpenAIEmbeddingClient(
 
 
 class OpenAIEmbeddingClient(
-    OpenAIConfigMixin,
     EmbeddingTelemetryLayer[str, list[float], OpenAIEmbeddingOptionsT],
     RawOpenAIEmbeddingClient[OpenAIEmbeddingOptionsT],
     Generic[OpenAIEmbeddingOptionsT],
@@ -189,31 +201,28 @@ class OpenAIEmbeddingClient(
             base_url=base_url,
             org_id=org_id,
             embedding_model_id=model_id,
+            required_fields=["embedding_model_id", *([] if async_client else ["api_key"])],
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
-        api_key_value = openai_settings.get("api_key")
-        if not async_client and not api_key_value:
-            raise ValueError(
-                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
-            )
-
-        embedding_model_id = openai_settings.get("embedding_model_id")
-        if not embedding_model_id:
-            raise ValueError(
-                "OpenAI embedding model ID is required. "
-                "Set via 'model_id' parameter or 'OPENAI_EMBEDDING_MODEL_ID' environment variable."
-            )
-
+        api_key_value = openai_settings["api_key"] if async_client is None else openai_settings.get("api_key")  # type: ignore[typeddict-item]
+        embedding_model_id: str = openai_settings["embedding_model_id"]  # type: ignore[assignment,typeddict-item]
         base_url_value = openai_settings.get("base_url")
-
-        super().__init__(
-            model_id=embedding_model_id,
-            api_key=self._get_api_key(api_key_value),
-            base_url=base_url_value if base_url_value else None,
+        async_client = create_openai_client(
+            api_key=normalize_openai_api_key(api_key_value),
             org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
+            base_url=base_url_value if base_url_value else None,
+        )
+
+        super().__init__(
+            model_id=embedding_model_id,
+            client=async_client,
+            additional_properties=None,
             otel_provider_name=otel_provider_name,
         )
+        self.org_id = openai_settings.get("org_id")
+        self.base_url = str(base_url_value)
+        self.default_headers = serialize_openai_default_headers(default_headers)

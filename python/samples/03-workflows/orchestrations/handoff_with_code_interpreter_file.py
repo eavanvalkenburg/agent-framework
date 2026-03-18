@@ -28,7 +28,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -90,9 +90,10 @@ async def main() -> None:
     """Run a simple handoff workflow with code interpreter file generation."""
     print("=== Handoff Workflow with Code Interpreter File Generation ===\n")
 
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

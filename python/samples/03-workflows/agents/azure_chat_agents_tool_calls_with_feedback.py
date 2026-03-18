@@ -22,7 +22,7 @@ from agent_framework import (
     response_handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -49,7 +49,7 @@ Demonstrates:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -175,11 +175,12 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
         # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="writer_agent",
@@ -195,9 +196,10 @@ def create_writer_agent() -> Agent:
 
 def create_final_editor_agent() -> Agent:
     """Creates a final editor agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="final_editor_agent",

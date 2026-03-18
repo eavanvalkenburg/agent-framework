@@ -34,8 +34,12 @@ from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_t
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import (
+        TypeVar,  # type: ignore # pragma: no cover
+        deprecated,  # pragma: no cover
+    )
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
@@ -55,8 +59,16 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated(
+    "'AzureAIProjectAgentProvider' is deprecated; use 'AIProjectClient.agents' for lifecycle "
+    "management and 'AzureAIClient' for execution against an existing agent instead.",
+)
 class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service (Responses API).
+
+    Deprecated: Use ``AIProjectClient.agents`` for agent lifecycle management and
+    ``AzureAIClient(details=...)`` or ``AzureAIClient(agent_name=..., agent_version=...)``
+    for execution against an existing Azure AI agent.
 
     This provider allows you to create, retrieve, and manage Azure AI agents
     using the AIProjectClient from the Azure AI Projects SDK.
@@ -108,6 +120,9 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     ) -> None:
         """Initialize an Azure AI Project Agent Provider.
 
+        Deprecated: Use ``AIProjectClient.agents`` for lifecycle operations and create
+        ``AzureAIClient`` instances from existing agent details or explicit name/version values.
+
         Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             project_endpoint: The Azure AI Project endpoint URL.
@@ -125,11 +140,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         Raises:
             ValueError: If required parameters are missing or invalid.
         """
+        # TODO(Copilot): Delete once ``AzureAIProjectAgentProvider`` is removed in favor of direct
+        # ``AIProjectClient.agents`` lifecycle management plus ``AzureAIClient`` execution.
         self._settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",
             project_endpoint=project_endpoint,
             model_deployment_name=model,
+            required_fields=["project_endpoint"] if project_client is None else None,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -138,12 +156,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         self._should_close_client = False
 
         if project_client is None:
-            resolved_endpoint = self._settings.get("project_endpoint")
-            if not resolved_endpoint:
-                raise ValueError(
-                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
-                )
+            resolved_endpoint: str = self._settings["project_endpoint"]  # type: ignore[assignment,typeddict-item]
 
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
@@ -386,10 +399,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
 
         client = AzureAIClient(
             project_client=self._project_client,
-            agent_name=details.name,
-            agent_version=details.version,
-            agent_description=details.description,
-            model_deployment_name=details.definition.model,
+            details=details,
         )
 
         # Merge tools: hosted tools from definition + user-provided function tools

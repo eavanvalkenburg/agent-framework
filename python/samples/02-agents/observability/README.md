@@ -91,12 +91,18 @@ enable_instrumentation(enable_sensitive_data=False)
 For Azure AI projects, use the `client.configure_azure_monitor()` method which wraps the calls to `configure_azure_monitor()` and `enable_instrumentation()`:
 
 ```python
+import os
+
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 
 async with (
     AIProjectClient(...) as project_client,
-    AzureAIClient(project_client=project_client) as client,
+    AzureAIClient(
+        project_client=project_client,
+        agent_name=os.environ["AZURE_AI_AGENT_NAME"],
+        agent_version=os.environ["AZURE_AI_AGENT_VERSION"],
+    ) as client,
 ):
     # Automatically configures Azure Monitor with connection string from project
     await client.configure_azure_monitor(enable_live_metrics=True)
@@ -348,12 +354,18 @@ setup_observability(
 **After (Current):**
 ```python
 # For Azure AI projects
+import os
+
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 
 async with (
     AIProjectClient(...) as project_client,
-    AzureAIClient(project_client=project_client) as client,
+    AzureAIClient(
+        project_client=project_client,
+        agent_name=os.environ["AZURE_AI_AGENT_NAME"],
+        agent_version=os.environ["AZURE_AI_AGENT_VERSION"],
+    ) as client,
 ):
     await client.configure_azure_monitor(enable_live_metrics=True)
 

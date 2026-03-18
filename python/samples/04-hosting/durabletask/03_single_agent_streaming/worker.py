@@ -22,9 +22,9 @@ from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
-    AzureOpenAIChatClient,
     DurableAIAgentWorker,
 )
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -153,7 +153,7 @@ def create_travel_agent() -> "Agent":
     Returns:
         Agent: The configured TravelPlanner agent with travel planning tools.
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

@@ -77,6 +77,8 @@ class AzureAISettings(TypedDict, total=False):
 
     project_endpoint: str | None
     model_deployment_name: str | None
+    agent_name: str | None
+    agent_version: str | None
 
 
 def _extract_project_connection_id(additional_properties: Mapping[str, Any] | None) -> str | None:

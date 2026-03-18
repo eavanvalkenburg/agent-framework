@@ -15,7 +15,7 @@ from agent_framework import (
     WorkflowContext,  # Per run context and event bus
     handler,  # Decorator to mark an Executor method as invokable
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -37,7 +37,7 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
-- Azure OpenAI access configured for AzureOpenAIResponsesClient. Log in with Azure CLI and set any required environment variables.
+- Azure OpenAI access configured for OpenAIResponsesClient. Log in with Azure CLI and set any required environment variables.
 - Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.
 """
 
@@ -114,9 +114,10 @@ async def main() -> None:
     aggregator = AggregateInsights(id="aggregator")
 
     researcher = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(
@@ -127,9 +128,10 @@ async def main() -> None:
         )
     )
     marketer = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(
@@ -140,9 +142,10 @@ async def main() -> None:
         )
     )
     legal = AgentExecutor(
-        AzureOpenAIResponsesClient(
+        OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             instructions=(

@@ -3,7 +3,7 @@
 """Route email requests through conditional orchestration with two agents.
 
 Components used in this sample:
-- AzureOpenAIChatClient agents for spam detection and email drafting.
+- OpenAIChatClient agents for spam detection and email drafting.
 - AgentFunctionApp with Durable orchestration, activity, and HTTP triggers.
 - Pydantic models that validate payloads and agent JSON responses.
 
@@ -17,7 +17,8 @@ from collections.abc import Generator, Mapping
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -49,7 +50,7 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential())
 
     spam_agent = client.as_agent(
         name=SPAM_AGENT_NAME,

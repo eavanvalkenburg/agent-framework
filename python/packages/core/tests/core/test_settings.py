@@ -9,6 +9,7 @@ from typing import TypedDict
 import pytest
 
 from agent_framework import SecretString, load_settings
+from agent_framework._settings import resolve_backend_setting
 
 
 class SimpleSettings(TypedDict, total=False):
@@ -32,6 +33,11 @@ class ExclusiveSettings(TypedDict, total=False):
     source_a: str | None
     source_b: str | None
     other: str | None
+
+
+class AliasSettings(TypedDict, total=False):
+    endpoint: str | None
+    api_version: str | None
 
 
 class TestLoadSettingsBasic:
@@ -205,7 +211,104 @@ class TestTypeCoercion:
         for false_val in ["false", "False", "FALSE", "0", "no", "off"]:
             monkeypatch.setenv("TEST_APP_ENABLED", false_val)
             settings = load_settings(SimpleSettings, env_prefix="TEST_APP_")
-            assert settings["enabled"] is False, f"Failed for {false_val}"
+        assert settings["enabled"] is False, f"Failed for {false_val}"
+
+
+class TestEnvVarAliases:
+    """Test explicit environment variable alias lookup."""
+
+    def test_alias_env_var_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PRIMARY_ENDPOINT", "https://alias.example")
+
+        settings = load_settings(
+            AliasSettings,
+            env_prefix="TEST_",
+            env_var_names={"endpoint": ("PRIMARY_ENDPOINT", "SECONDARY_ENDPOINT")},
+        )
+
+        assert settings["endpoint"] == "https://alias.example"
+
+    def test_alias_order_takes_precedence_over_later_aliases(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PRIMARY_VERSION", "2025-01-01")
+        monkeypatch.setenv("SECONDARY_VERSION", "2024-01-01")
+
+        settings = load_settings(
+            AliasSettings,
+            env_var_names={"api_version": ("PRIMARY_VERSION", "SECONDARY_VERSION")},
+        )
+
+        assert settings["api_version"] == "2025-01-01"
+
+    def test_alias_mapping_replaces_default_prefixed_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_ENDPOINT", "https://default.example")
+        monkeypatch.setenv("PRIMARY_ENDPOINT", "https://alias.example")
+
+        settings = load_settings(
+            AliasSettings,
+            env_prefix="TEST_",
+            env_var_names={"endpoint": ("PRIMARY_ENDPOINT",)},
+        )
+
+        assert settings["endpoint"] == "https://alias.example"
+
+    def test_required_field_error_mentions_alias_names(self) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with pytest.raises(SettingNotFoundError, match="PRIMARY_ENDPOINT"):
+            load_settings(
+                AliasSettings,
+                env_var_names={"endpoint": ("PRIMARY_ENDPOINT", "SECONDARY_ENDPOINT")},
+                required_fields=["endpoint"],
+            )
+
+
+class TestResolveBackendSetting:
+    """Test shared backend resolution helper."""
+
+    def test_explicit_backend_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_BACKEND", "env-value")
+
+        result = resolve_backend_setting(
+            backend="explicit",
+            env_var_name="TEST_BACKEND",
+            default_backend="default",
+            allowed_backends=("explicit", "default", "env-value"),
+        )
+
+        assert result == "explicit"
+
+    def test_env_backend_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_BACKEND", "env-value")
+
+        result = resolve_backend_setting(
+            backend=None,
+            env_var_name="TEST_BACKEND",
+            default_backend="default",
+            allowed_backends=("default", "env-value"),
+        )
+
+        assert result == "env-value"
+
+    def test_default_backend_is_used_when_unset(self) -> None:
+        result = resolve_backend_setting(
+            backend=None,
+            env_var_name="TEST_BACKEND",
+            default_backend="default",
+            allowed_backends=("default", "env-value"),
+        )
+
+        assert result == "default"
+
+    def test_invalid_backend_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_BACKEND", "invalid")
+
+        with pytest.raises(ValueError, match="Unsupported backend"):
+            resolve_backend_setting(
+                backend=None,
+                env_var_name="TEST_BACKEND",
+                default_backend="default",
+                allowed_backends=("default", "env-value"),
+            )
 
 
 class TestRequiredFields:

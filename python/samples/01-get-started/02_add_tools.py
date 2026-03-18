@@ -5,8 +5,8 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -36,19 +36,23 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+
 # </define_tool>
 
 
 async def main() -> None:
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
     # <create_agent_with_tools>
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
         tools=get_weather,

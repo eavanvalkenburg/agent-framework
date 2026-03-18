@@ -2,160 +2,44 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai.lib.azure import AsyncAzureOpenAI
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import BaseModel
 
-from agent_framework import (
-    Annotation,
-    ChatMiddlewareLayer,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    FunctionInvocationConfiguration,
-    FunctionInvocationLayer,
+from agent_framework import FunctionInvocationConfiguration
+from agent_framework.openai._chat_client import (
+    AzureOpenAIChatOptions as _AzureOpenAIChatOptions,
 )
-from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai import OpenAIChatOptions
-from agent_framework.openai._chat_client import RawOpenAIChatClient
+from agent_framework.openai._chat_client import (
+    AzureOpenAIChatOptionsT,
+    OpenAIChatClient,
+)
+from agent_framework.openai._chat_client import (
+    AzureUserSecurityContext as _AzureUserSecurityContext,
+)
 
-from .._settings import load_settings
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
-from ._shared import (
-    AzureOpenAIConfigMixin,
-    AzureOpenAISettings,
-    _apply_azure_defaults,  # pyright: ignore[reportPrivateUsage]
-)
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
-
+    from typing_extensions import (
+        deprecated,  # pragma: no cover
+    )
 if TYPE_CHECKING:
     from agent_framework._middleware import MiddlewareTypes
 
-logger: logging.Logger = logging.getLogger(__name__)
+AzureOpenAIChatOptions = _AzureOpenAIChatOptions
+AzureUserSecurityContext = _AzureUserSecurityContext
 
 
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
-
-
-# region Azure OpenAI Chat Options TypedDict
-
-
-class AzureUserSecurityContext(TypedDict, total=False):
-    """User security context for Azure AI applications.
-
-    These fields help security operations teams investigate and mitigate security
-    incidents by providing context about the application and end user.
-
-    Learn more: https://learn.microsoft.com/azure/well-architected/service-guides/cosmos-db
-    """
-
-    application_name: str
-    """Name of the application making the request."""
-
-    end_user_id: str
-    """Unique identifier for the end user (recommend hashing username/email)."""
-
-    end_user_tenant_id: str
-    """Microsoft 365 tenant ID the end user belongs to. Required for multi-tenant apps."""
-
-    source_ip: str
-    """The original client's IP address."""
-
-
-class AzureOpenAIChatOptions(OpenAIChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
-    """Azure OpenAI-specific chat options dict.
-
-    Extends OpenAIChatOptions with Azure-specific options including
-    the "On Your Data" feature and enhanced security context.
-
-    See: https://learn.microsoft.com/azure/ai-foundry/openai/reference-preview-latest
-
-    Keys:
-        # Inherited from OpenAIChatOptions/ChatOptions:
-        model_id: The model to use for the request,
-            translates to ``model`` in Azure OpenAI API.
-        temperature: Sampling temperature between 0 and 2.
-        top_p: Nucleus sampling parameter.
-        max_tokens: Maximum number of tokens to generate,
-            translates to ``max_completion_tokens`` in Azure OpenAI API.
-        stop: Stop sequences.
-        seed: Random seed for reproducibility.
-        frequency_penalty: Frequency penalty between -2.0 and 2.0.
-        presence_penalty: Presence penalty between -2.0 and 2.0.
-        tools: List of tools (functions) available to the model.
-        tool_choice: How the model should use tools.
-        allow_multiple_tool_calls: Whether to allow parallel tool calls,
-            translates to ``parallel_tool_calls`` in Azure OpenAI API.
-        response_format: Structured output schema.
-        metadata: Request metadata for tracking.
-        user: End-user identifier for abuse monitoring.
-        store: Whether to store the conversation.
-        instructions: System instructions for the model.
-        logit_bias: Token bias values (-100 to 100).
-        logprobs: Whether to return log probabilities.
-        top_logprobs: Number of top log probabilities to return (0-20).
-
-        # Azure-specific options:
-        data_sources: Azure "On Your Data" data sources configuration.
-        user_security_context: Enhanced security context for Azure Defender.
-        n: Number of chat completions to generate (not recommended, incurs costs).
-    """
-
-    # Azure-specific options
-    data_sources: list[dict[str, Any]]
-    """Azure "On Your Data" data sources for retrieval-augmented generation.
-
-    Supported types: azure_search, azure_cosmos_db, elasticsearch, pinecone, mongo_db.
-    See: https://learn.microsoft.com/azure/ai-foundry/openai/references/on-your-data
-    """
-
-    user_security_context: AzureUserSecurityContext
-    """Enhanced security context for Azure Defender integration."""
-
-    n: int
-    """Number of chat completion choices to generate for each input message.
-    Note: You will be charged based on tokens across all choices. Keep n=1 to minimize costs."""
-
-
-AzureOpenAIChatOptionsT = TypeVar(
-    "AzureOpenAIChatOptionsT",
-    bound=TypedDict,  # type: ignore[valid-type]
-    default="AzureOpenAIChatOptions",
-    covariant=True,
+@deprecated(
+    "'AzureOpenAIChatClient' is deprecated; use 'OpenAIChatClient(backend=\"azure_openai\")' instead.",
 )
-
-
-# endregion
-
-ChatResponseT = TypeVar("ChatResponseT", ChatResponse, ChatResponseUpdate)
-AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAIChatClient")
-
-
 class AzureOpenAIChatClient(  # type: ignore[misc]
-    AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
-    FunctionInvocationLayer[AzureOpenAIChatOptionsT],
-    ChatTelemetryLayer[AzureOpenAIChatOptionsT],
-    RawOpenAIChatClient[AzureOpenAIChatOptionsT],
+    OpenAIChatClient[AzureOpenAIChatOptionsT],
     Generic[AzureOpenAIChatOptionsT],
 ):
     """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
@@ -236,7 +120,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
-                from agent_framework.azure import AzureOpenAIChatOptions
+                from agent_framework.openai import AzureOpenAIChatOptions
 
 
                 class MyOptions(AzureOpenAIChatOptions, total=False):
@@ -246,102 +130,22 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
                 client: AzureOpenAIChatClient[MyOptions] = AzureOpenAIChatClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        azure_openai_settings = load_settings(
-            AzureOpenAISettings,
-            env_prefix="AZURE_OPENAI_",
+        # TODO(Copilot): Delete once ``AzureOpenAIChatClient`` is removed in favor of ``OpenAIChatClient``.
+        super().__init__(
+            model_id=deployment_name,
+            backend="azure_openai",
             api_key=api_key,
             base_url=base_url,
             endpoint=endpoint,
-            chat_deployment_name=deployment_name,
             api_version=api_version,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
             token_endpoint=token_endpoint,
-        )
-        _apply_azure_defaults(azure_openai_settings)
-
-        chat_deployment_name = azure_openai_settings.get("chat_deployment_name")
-        if not chat_deployment_name:
-            raise ValueError(
-                "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
-                "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
-            )
-
-        endpoint_value = azure_openai_settings.get("endpoint")
-        base_url_value = azure_openai_settings.get("base_url")
-        api_version_value = cast(str, azure_openai_settings.get("api_version"))
-        api_key_value = azure_openai_settings.get("api_key")
-        token_endpoint_value = azure_openai_settings.get("token_endpoint")
-
-        super().__init__(
-            deployment_name=chat_deployment_name,
-            endpoint=endpoint_value,
-            base_url=base_url_value,
-            api_version=api_version_value,
-            api_key=api_key_value.get_secret_value() if api_key_value else None,
-            token_endpoint=token_endpoint_value,
             credential=credential,
             default_headers=default_headers,
-            client=async_client,
+            async_client=async_client,
             additional_properties=additional_properties,
             instruction_role=instruction_role,
-            middleware=middleware,
+            middleware=cast(Any, middleware),
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
             function_invocation_configuration=function_invocation_configuration,
         )
-
-    @override
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
-        """Parse the choice into a Content object with type='text'.
-
-        Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
-        For docs see:
-        https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
-        """
-        message = choice.message if isinstance(choice, Choice) else choice.delta
-        # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
-        if message is None:  # type: ignore
-            return None
-        if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
-        if not message.content:
-            return None
-        text_content = Content.from_text(text=message.content, raw_representation=choice)
-        if not message.model_extra or "context" not in message.model_extra:
-            return text_content
-
-        context_raw: object = cast(object, message.context)  # type: ignore[union-attr]
-        if isinstance(context_raw, str):
-            try:
-                context_raw = json.loads(context_raw)
-            except json.JSONDecodeError:
-                logger.warning("Context is not a valid JSON string, ignoring context.")
-                return text_content
-        if not isinstance(context_raw, dict):
-            logger.warning("Context is not a valid dictionary, ignoring context.")
-            return text_content
-        context = cast(dict[str, Any], context_raw)
-        # `all_retrieved_documents` is currently not used, but can be retrieved
-        # through the raw_representation in the text content.
-        if intent := context.get("intent"):
-            text_content.additional_properties = {"intent": intent}
-        citations = context.get("citations")
-        if isinstance(citations, list) and citations:
-            annotations: list[Annotation] = []
-            for citation_raw in cast(list[object], citations):
-                if not isinstance(citation_raw, dict):
-                    continue
-                citation = cast(dict[str, Any], citation_raw)
-                annotations.append(
-                    Annotation(
-                        type="citation",
-                        title=citation.get("title", ""),
-                        url=citation.get("url", ""),
-                        snippet=citation.get("content", ""),
-                        file_id=citation.get("filepath", ""),
-                        tool_name="Azure-on-your-Data",
-                        additional_properties={"chunk_id": citation.get("chunk_id", "")},
-                        raw_representation=citation,
-                    )
-                )
-            text_content.annotations = annotations
-        return text_content

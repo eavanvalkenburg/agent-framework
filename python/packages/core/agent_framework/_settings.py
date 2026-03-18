@@ -32,9 +32,9 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, TypedDict, Union, cast, get_args, get_origin, get_type_hints
 
 from dotenv import dotenv_values
 
@@ -47,6 +47,13 @@ else:
 
 
 SettingsT = TypeVar("SettingsT", default=dict[str, Any])
+BackendT = TypeVar("BackendT", bound=str)
+
+
+class _BackendSetting(TypedDict, total=False):
+    """Internal backend settings shape for generic backend resolution."""
+
+    backend: str | None
 
 
 class SecretString(str):
@@ -161,12 +168,83 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
         )
 
 
+def _get_env_var_names(
+    field_name: str,
+    env_prefix: str,
+    env_var_names: Mapping[str, str | Sequence[str]] | None,
+) -> tuple[str, ...]:
+    """Return the environment variable names to check for a field."""
+    if env_var_names is None or field_name not in env_var_names:
+        return (f"{env_prefix}{field_name.upper()}",)
+
+    configured_names = env_var_names[field_name]
+    if isinstance(configured_names, str):
+        return (configured_names,)
+
+    normalized_names = tuple(dict.fromkeys(configured_names))
+    if normalized_names:
+        return normalized_names
+    return (f"{env_prefix}{field_name.upper()}",)
+
+
+def _format_env_var_hint(env_names: Sequence[str]) -> str:
+    """Format environment variable names for error messages."""
+    if len(env_names) == 1:
+        return f"the '{env_names[0]}' environment variable"
+
+    env_list = ", ".join(f"'{env_name}'" for env_name in env_names)
+    return f"one of the {env_list} environment variables"
+
+
+def resolve_backend_setting(
+    *,
+    backend: BackendT | None,
+    env_var_name: str,
+    default_backend: BackendT,
+    allowed_backends: tuple[BackendT, ...],
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> BackendT:
+    """Resolve a backend selector from explicit input or environment state.
+
+    Args:
+        backend: Explicit backend override when provided.
+        env_var_name: Environment variable name used to resolve the backend when no explicit
+            value is supplied.
+        default_backend: Backend to use when no explicit or environment value is set.
+        allowed_backends: Allowed backend values.
+        env_file_path: Optional `.env` file to read before process environment variables.
+        env_file_encoding: Encoding for the `.env` file.
+
+    Returns:
+        The resolved backend value.
+
+    Raises:
+        ValueError: If the resolved backend is not one of `allowed_backends`.
+    """
+    settings = load_settings(
+        _BackendSetting,
+        backend=backend,
+        env_var_names={"backend": (env_var_name,)},
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
+    resolved_backend = cast(BackendT | None, settings.get("backend"))
+    if resolved_backend is None:
+        return default_backend
+    if resolved_backend not in allowed_backends:
+        allowed = ", ".join(f"'{backend_name}'" for backend_name in allowed_backends)
+        raise ValueError(f"Unsupported backend {resolved_backend!r}. Expected one of: {allowed}.")
+    return resolved_backend
+
+
 def load_settings(
     settings_type: type[SettingsT],
     *,
     env_prefix: str = "",
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
+    env_var_names: Mapping[str, str | Sequence[str]] | None = None,
     required_fields: Sequence[str | tuple[str, ...]] | None = None,
     **overrides: Any,
 ) -> SettingsT:
@@ -193,6 +271,9 @@ def load_settings(
         env_file_path: Path to ``.env`` file. When provided, the file is required
             and values are resolved before process environment variables.
         env_file_encoding: Encoding for reading the ``.env`` file.  Defaults to ``"utf-8"``.
+        env_var_names: Optional mapping from setting field names to explicit environment
+            variable names to check, in priority order. When provided for a field, these names
+            are used instead of the default ``<env_prefix><FIELD_NAME>`` lookup.
         required_fields: Field names (``str``) that must resolve to a non-``None``
             value, or tuples of field names where exactly one must be set.
         **overrides: Field values.  ``None`` values are ignored so that callers can
@@ -238,25 +319,33 @@ def load_settings(
             result[field_name] = override_value
             continue
 
-        env_var_name = f"{env_prefix}{field_name.upper()}"
+        env_names = _get_env_var_names(field_name, env_prefix, env_var_names)
 
         # 2. Optional .env value (only when env_file_path is explicitly provided)
         if loaded_dotenv_values:
-            dotenv_value = loaded_dotenv_values.get(env_var_name)
-            if dotenv_value is not None:
+            for env_var_name in env_names:
+                dotenv_value = loaded_dotenv_values.get(env_var_name)
+                if dotenv_value is None:
+                    continue
                 try:
                     result[field_name] = _coerce_value(dotenv_value, field_type)
                 except (ValueError, TypeError):
                     result[field_name] = dotenv_value
+                break
+            if field_name in result:
                 continue
 
         # 3. Environment variable
-        env_value = os.getenv(env_var_name)
-        if env_value is not None:
+        for env_var_name in env_names:
+            env_value = os.getenv(env_var_name)
+            if env_value is None:
+                continue
             try:
                 result[field_name] = _coerce_value(env_value, field_type)
             except (ValueError, TypeError):
                 result[field_name] = env_value
+            break
+        if field_name in result:
             continue
 
         # 4. Default from TypedDict class-level defaults, or None for optional fields
@@ -271,11 +360,11 @@ def load_settings(
             if isinstance(entry, str):
                 # Single required field
                 if result.get(entry) is None:
-                    env_var_name = f"{env_prefix}{entry.upper()}"
+                    env_names = _get_env_var_names(entry, env_prefix, env_var_names)
                     raise SettingNotFoundError(
                         f"Required setting '{entry}' was not provided. "
                         f"Set it via the '{entry}' parameter or the "
-                        f"'{env_var_name}' environment variable."
+                        f"{_format_env_var_hint(env_names)}."
                     )
             else:
                 # Mutually exclusive group — exactly one must be set

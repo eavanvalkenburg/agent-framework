@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from agent_framework import Agent, SkillsProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -44,9 +44,10 @@ async def main() -> None:
     deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
 
     # Create the chat client
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model_id=deployment,
         credential=AzureCliCredential(),
     )
 
@@ -70,8 +71,7 @@ async def main() -> None:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? "
-            "And how many pounds is 75 kilograms?"
+            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?"
         )
         print(f"Agent: {response}\n")
 

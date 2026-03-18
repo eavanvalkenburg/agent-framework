@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -27,11 +27,16 @@ from agent_framework import (
     UsageDetails,
     tool,
 )
-from agent_framework._settings import SecretString, load_settings
+from agent_framework._settings import SecretString, load_settings, resolve_backend_setting
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
+from agent_framework.azure._entra_id_authentication import (
+    AzureCredentialTypes,
+    AzureTokenProvider,
+    resolve_credential_to_token_provider,
+)
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic
+from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,
@@ -76,6 +81,7 @@ logger = logging.getLogger("agent_framework.anthropic")
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
+DEFAULT_FOUNDRY_TOKEN_ENDPOINT: Final[str] = "https://ai.azure.com/.default"  # noqa: S105
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
@@ -208,6 +214,22 @@ class AnthropicSettings(TypedDict, total=False):
 
     api_key: SecretString | None
     chat_model_id: str | None
+    base_url: str | None
+    foundry_api_key: SecretString | None
+    foundry_resource: str | None
+    foundry_base_url: str | None
+    aws_region: str | None
+    aws_profile: str | None
+    aws_access_key: str | None
+    aws_secret_key: str | None
+    aws_session_token: str | None
+    bedrock_base_url: str | None
+    vertex_region: str | None
+    vertex_project_id: str | None
+    vertex_base_url: str | None
+
+
+AnthropicBackend = Literal["anthropic", "foundry", "bedrock", "vertex"]
 
 
 class AnthropicClient(
@@ -221,12 +243,188 @@ class AnthropicClient(
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
+    @overload
     def __init__(
         self,
+        backend: Literal["anthropic"] | None = None,
         *,
         api_key: str | None = None,
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
+        base_url: str | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Anthropic client.
+
+        Args:
+            backend: Optional backend override. Defaults to Anthropic's standard API.
+
+        Keyword Args:
+            api_key: Anthropic API key override.
+            model_id: Anthropic model ID override.
+            anthropic_client: Existing Anthropic client to use.
+            base_url: Anthropic base URL override.
+            additional_beta_flags: Additional beta flags to enable on the client.
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["foundry"],
+        *,
+        api_key: str | None = None,
+        model_id: str | None = None,
+        anthropic_client: AsyncAnthropicFoundry | None = None,
+        base_url: str | None = None,
+        resource: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        token_endpoint: str | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure AI Foundry Anthropic client.
+
+        Args:
+            backend: Backend selector for Azure AI Foundry Anthropic requests.
+
+        Keyword Args:
+            api_key: Foundry Anthropic API key override.
+            model_id: Anthropic model ID override.
+            anthropic_client: Existing Anthropic Foundry client to use.
+            base_url: Foundry Anthropic base URL override.
+            resource: Foundry Anthropic resource name override.
+            credential: Azure credential or token provider for Foundry auth.
+            token_endpoint: Azure token scope used with the Foundry credential flow.
+            additional_beta_flags: Additional beta flags to enable on the client.
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["bedrock"],
+        *,
+        model_id: str | None = None,
+        anthropic_client: AsyncAnthropicBedrock | None = None,
+        base_url: str | None = None,
+        aws_region: str | None = None,
+        aws_profile: str | None = None,
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        aws_session_token: str | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Anthropic Bedrock client.
+
+        Args:
+            backend: Backend selector for Anthropic Bedrock requests.
+
+        Keyword Args:
+            model_id: Anthropic model ID override.
+            anthropic_client: Existing Anthropic Bedrock client to use.
+            base_url: Bedrock base URL override.
+            aws_region: AWS region used for Bedrock.
+            aws_profile: AWS profile name used for Bedrock.
+            aws_access_key: AWS access key used for Bedrock.
+            aws_secret_key: AWS secret access key used for Bedrock.
+            aws_session_token: AWS session token used for Bedrock.
+            additional_beta_flags: Additional beta flags to enable on the client.
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        backend: Literal["vertex"],
+        *,
+        model_id: str | None = None,
+        anthropic_client: AsyncAnthropicVertex | None = None,
+        base_url: str | None = None,
+        region: str | None = None,
+        project_id: str | None = None,
+        access_token: str | None = None,
+        credentials: Any | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Anthropic Vertex client.
+
+        Args:
+            backend: Backend selector for Anthropic Vertex requests.
+
+        Keyword Args:
+            model_id: Anthropic model ID override.
+            anthropic_client: Existing Anthropic Vertex client to use.
+            base_url: Vertex base URL override.
+            region: Vertex AI region override.
+            project_id: Vertex AI project ID override.
+            access_token: Vertex AI access token override.
+            credentials: Vertex AI Google credentials object override.
+            additional_beta_flags: Additional beta flags to enable on the client.
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+        """
+        ...
+
+    def __init__(
+        self,
+        backend: AnthropicBackend | None = None,
+        *,
+        api_key: str | None = None,
+        model_id: str | None = None,
+        anthropic_client: (
+            AsyncAnthropic | AsyncAnthropicFoundry | AsyncAnthropicBedrock | AsyncAnthropicVertex | None
+        ) = None,
+        base_url: str | None = None,
+        resource: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        token_endpoint: str | None = None,
+        aws_region: str | None = None,
+        aws_profile: str | None = None,
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        aws_session_token: str | None = None,
+        region: str | None = None,
+        project_id: str | None = None,
+        access_token: str | None = None,
+        credentials: Any | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -236,17 +434,57 @@ class AnthropicClient(
     ) -> None:
         """Initialize an Anthropic Agent client.
 
+        Args:
+            backend: Backend to use for Anthropic-compatible requests.
+                Can also be set via environment variable ANTHROPIC_BACKEND.
+
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
+                Can also be set via environment variable ANTHROPIC_API_KEY for ``backend="anthropic"``
+                or ANTHROPIC_FOUNDRY_API_KEY for ``backend="foundry"``.
             model_id: The ID of the model to use.
+                Can also be set via environment variable ANTHROPIC_CHAT_MODEL_ID.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
+
+            base_url: Optional backend-specific base URL override.
+                Can also be set via environment variable ANTHROPIC_BASE_URL for ``backend="anthropic"``,
+                ANTHROPIC_FOUNDRY_BASE_URL for ``backend="foundry"``,
+                ANTHROPIC_BEDROCK_BASE_URL for ``backend="bedrock"``, or
+                ANTHROPIC_VERTEX_BASE_URL for ``backend="vertex"``.
+            resource: Azure AI Foundry Anthropic resource name for the Foundry backend.
+                Can also be set via environment variable ANTHROPIC_FOUNDRY_RESOURCE.
+            credential: Azure credential or token provider used for the Foundry backend.
+
+            token_endpoint: Azure token scope used with the Foundry backend credential flow.
+
+            aws_region: AWS region used for the Bedrock backend.
+                Can also be set via environment variable AWS_REGION or AWS_DEFAULT_REGION.
+            aws_profile: AWS profile name used for the Bedrock backend.
+                Can also be set via environment variable AWS_PROFILE.
+            aws_access_key: AWS access key used for the Bedrock backend.
+                Can also be set via environment variable AWS_ACCESS_KEY_ID.
+            aws_secret_key: AWS secret access key used for the Bedrock backend.
+                Can also be set via environment variable AWS_SECRET_ACCESS_KEY.
+            aws_session_token: AWS session token used for the Bedrock backend.
+                Can also be set via environment variable AWS_SESSION_TOKEN.
+            region: Vertex AI region used for the Vertex backend.
+                Can also be set via environment variable CLOUD_ML_REGION.
+            project_id: Vertex AI project ID used for the Vertex backend.
+                Can also be set via environment variable GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.
+            access_token: Vertex AI access token override.
+
+            credentials: Vertex AI Google credentials object override.
+
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+
             additional_properties: Additional properties stored on the client instance.
+
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
+
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -293,29 +531,111 @@ class AnthropicClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
+        resolved_backend = resolve_backend_setting(
+            backend=backend,
+            env_var_name="ANTHROPIC_BACKEND",
+            default_backend="anthropic",
+            allowed_backends=("anthropic", "foundry", "bedrock", "vertex"),
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        required_fields: list[str] = ["chat_model_id"]
+        if anthropic_client is None and resolved_backend == "anthropic":
+            required_fields.append("api_key")
+        if anthropic_client is None and resolved_backend == "foundry":
+            required_fields.append("foundry_resource")
+
         anthropic_settings = load_settings(
             AnthropicSettings,
             env_prefix="ANTHROPIC_",
             api_key=api_key,
             chat_model_id=model_id,
+            base_url=base_url,
+            foundry_api_key=api_key,
+            foundry_resource=resource,
+            foundry_base_url=base_url,
+            aws_region=aws_region,
+            aws_profile=aws_profile,
+            aws_access_key=aws_access_key,
+            aws_secret_key=aws_secret_key,
+            aws_session_token=aws_session_token,
+            bedrock_base_url=base_url,
+            vertex_region=region,
+            vertex_project_id=project_id,
+            vertex_base_url=base_url,
+            env_var_names={
+                "foundry_api_key": ("ANTHROPIC_FOUNDRY_API_KEY",),
+                "foundry_resource": ("ANTHROPIC_FOUNDRY_RESOURCE",),
+                "foundry_base_url": ("ANTHROPIC_FOUNDRY_BASE_URL",),
+                "aws_region": ("AWS_REGION", "AWS_DEFAULT_REGION"),
+                "aws_profile": ("AWS_PROFILE",),
+                "aws_access_key": ("AWS_ACCESS_KEY_ID",),
+                "aws_secret_key": ("AWS_SECRET_ACCESS_KEY",),
+                "aws_session_token": ("AWS_SESSION_TOKEN",),
+                "bedrock_base_url": ("ANTHROPIC_BEDROCK_BASE_URL",),
+                "vertex_region": ("CLOUD_ML_REGION",),
+                "vertex_project_id": ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"),
+                "vertex_base_url": ("ANTHROPIC_VERTEX_BASE_URL",),
+            },
+            required_fields=required_fields,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
-        api_key_secret = anthropic_settings.get("api_key")
-        model_id_setting = anthropic_settings.get("chat_model_id")
+        model_id_setting: str = anthropic_settings["chat_model_id"]  # type: ignore[assignment,typeddict-item]
 
         if anthropic_client is None:
-            if api_key_secret is None:
-                raise ValueError(
-                    "Anthropic API key is required. Set via 'api_key' parameter "
-                    "or 'ANTHROPIC_API_KEY' environment variable."
+            default_headers = {"User-Agent": AGENT_FRAMEWORK_USER_AGENT}
+            if resolved_backend == "anthropic":
+                anthropic_client = AsyncAnthropic(
+                    api_key=anthropic_settings["api_key"].get_secret_value(),  # type: ignore[typeddict-item,union-attr]
+                    base_url=anthropic_settings.get("base_url"),
+                    default_headers=default_headers,
                 )
+            elif resolved_backend == "foundry":
+                foundry_api_key_secret = anthropic_settings.get("foundry_api_key")
+                foundry_api_key = foundry_api_key_secret.get_secret_value() if foundry_api_key_secret else None
+                foundry_base_url = anthropic_settings.get("foundry_base_url")
+                azure_ad_token_provider = None
+                if foundry_api_key is None and credential is not None:
+                    azure_ad_token_provider = resolve_credential_to_token_provider(
+                        credential,
+                        token_endpoint or DEFAULT_FOUNDRY_TOKEN_ENDPOINT,
+                    )
 
-            anthropic_client = AsyncAnthropic(
-                api_key=api_key_secret.get_secret_value(),
-                default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
-            )
+                if foundry_api_key is None and azure_ad_token_provider is None:
+                    raise ValueError(
+                        "Anthropic Foundry authentication is required. Provide 'api_key', 'credential', "
+                        "or 'anthropic_client'."
+                    )
+
+                foundry_client_kwargs: dict[str, Any] = {
+                    "resource": anthropic_settings["foundry_resource"],  # type: ignore[arg-type,typeddict-item]
+                    "api_key": foundry_api_key,
+                    "azure_ad_token_provider": azure_ad_token_provider,
+                    "base_url": foundry_base_url,
+                    "default_headers": default_headers,
+                }
+                anthropic_client = AsyncAnthropicFoundry(**foundry_client_kwargs)
+            elif resolved_backend == "bedrock":
+                anthropic_client = AsyncAnthropicBedrock(
+                    aws_secret_key=anthropic_settings.get("aws_secret_key"),
+                    aws_access_key=anthropic_settings.get("aws_access_key"),
+                    aws_region=anthropic_settings.get("aws_region"),
+                    aws_profile=anthropic_settings.get("aws_profile"),
+                    aws_session_token=anthropic_settings.get("aws_session_token"),
+                    base_url=anthropic_settings.get("bedrock_base_url"),
+                    default_headers=default_headers,
+                )
+            else:
+                anthropic_client = AsyncAnthropicVertex(
+                    region=anthropic_settings.get("vertex_region") or NOT_GIVEN,
+                    project_id=anthropic_settings.get("vertex_project_id") or NOT_GIVEN,
+                    access_token=access_token,
+                    credentials=credentials,
+                    base_url=anthropic_settings.get("vertex_base_url"),
+                    default_headers=default_headers,
+                )
 
         # Initialize parent
         super().__init__(
@@ -326,6 +646,7 @@ class AnthropicClient(
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
+        self.backend = resolved_backend
         self.additional_beta_flags = additional_beta_flags or []
         self.model_id = model_id_setting
         # streaming requires tracking the last function call ID, name, and content type

@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -33,7 +33,7 @@ What it does:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure AI/ Azure OpenAI for `AzureOpenAIResponsesClient` agent.
+- Azure AI/ Azure OpenAI for `OpenAIResponsesClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -123,9 +123,10 @@ class ParseJudgeResponse(Executor):
 
 def create_judge_agent() -> Agent:
     """Create a judge agent that evaluates guesses."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -49,7 +49,7 @@ to the Worker. The workflow completes when idle.
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
+- OpenAI account configured and accessible for OpenAIResponsesClient.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
 - (Optional) Review of reflection and escalation patterns, such as those in
@@ -110,9 +110,10 @@ async def main() -> None:
     # and escalation paths for human review.
     worker = Worker(
         id="worker",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )

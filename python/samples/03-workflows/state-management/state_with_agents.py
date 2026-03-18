@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -40,7 +40,7 @@ Show how to:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -162,9 +162,10 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 def create_spam_detection_agent() -> Agent:
     """Creates a spam detection agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=(
@@ -179,9 +180,10 @@ def create_spam_detection_agent() -> Agent:
 
 def create_email_assistant_agent() -> Agent:
     """Creates an email assistant agent."""
-    return AzureOpenAIResponsesClient(
+    return OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         instructions=(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from agent_framework import FileCheckpointStorage, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -69,9 +69,10 @@ def get_item_price(name: Annotated[str, Field(description="Menu item name")]) ->
 
 async def main():
     # Create agent with tools
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
     menu_agent = client.as_agent(

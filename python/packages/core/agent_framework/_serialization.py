@@ -425,8 +425,8 @@ class SerializationMixin:
                 from openai import AsyncOpenAI
 
 
-                # OpenAI chat client requires an AsyncOpenAI client instance
-                # The client is marked as INJECTABLE = {"client"} in OpenAIBase
+                # OpenAI chat clients require an AsyncOpenAI client instance
+                # The client dependency is marked as INJECTABLE = {"client"} on the OpenAI client class
 
                 # Serialized data contains only the model configuration
                 client_data = {

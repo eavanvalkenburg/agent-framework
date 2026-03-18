@@ -10,10 +10,12 @@ from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
 
+from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.openai import (
     OpenAIEmbeddingClient,
     OpenAIEmbeddingOptions,
 )
+from agent_framework.openai._shared import OpenAIBase, OpenAIConfigMixin
 
 
 def _make_openai_response(
@@ -55,15 +57,20 @@ def test_openai_construction_from_env(openai_unit_test_env: None) -> None:
     assert client.model_id == "text-embedding-3-small"
 
 
+def test_openai_embedding_mro_excludes_openai_bases() -> None:
+    assert OpenAIConfigMixin not in OpenAIEmbeddingClient.__mro__
+    assert OpenAIBase not in OpenAIEmbeddingClient.__mro__
+
+
 def test_openai_construction_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="API key is required"):
+    with pytest.raises(SettingNotFoundError, match="api_key"):
         OpenAIEmbeddingClient(model_id="text-embedding-3-small")
 
 
 def test_openai_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_EMBEDDING_MODEL_ID", raising=False)
-    with pytest.raises(ValueError, match="model ID is required"):
+    with pytest.raises(SettingNotFoundError, match="embedding_model_id"):
         OpenAIEmbeddingClient(api_key="test-key")
 
 

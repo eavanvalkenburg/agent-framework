@@ -46,7 +46,7 @@ All samples that use environment variables (API keys, endpoints, etc.) must call
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 

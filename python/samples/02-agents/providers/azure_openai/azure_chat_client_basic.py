@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -16,7 +16,7 @@ load_dotenv()
 """
 Azure OpenAI Chat Client Basic Example
 
-This sample demonstrates basic usage of AzureOpenAIChatClient for direct chat-based
+This sample demonstrates basic usage of OpenAIChatClient for direct chat-based
 interactions, showing both streaming and non-streaming responses.
 """
 
@@ -40,7 +40,7 @@ async def non_streaming_example() -> None:
     # Create agent with Azure Chat Client
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -58,7 +58,7 @@ async def streaming_example() -> None:
     # Create agent with Azure Chat Client
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

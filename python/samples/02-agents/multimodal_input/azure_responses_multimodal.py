@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from agent_framework import Content, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -33,8 +33,8 @@ async def test_image() -> None:
     # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME
     # environment variables to be set.
     # Alternatively, you can pass deployment_name explicitly:
-    # client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    # client = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential(), model_id="your-deployment-name")
+    client = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential())
 
     image_uri = create_sample_image()
     message = Message(
@@ -51,7 +51,7 @@ async def test_image() -> None:
 
 async def test_pdf() -> None:
     """Test PDF document analysis with Azure OpenAI Responses API."""
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential())
 
     pdf_bytes = load_sample_pdf()
     message = Message(

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Content
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -22,7 +22,7 @@ async def main():
     print("=== Azure Responses Agent with Image Analysis ===")
 
     # 1. Create an Azure Responses agent with vision capabilities
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
+    agent = OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential()).as_agent(
         name="VisionAgent",
         instructions="You are a image analysist, you get a image and need to respond with what you see in the picture.",
     )

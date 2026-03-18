@@ -15,6 +15,7 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework.exceptions import SettingNotFoundError
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -133,12 +134,9 @@ def test_anthropic_client_init_auto_create_client(
 def test_anthropic_client_init_missing_api_key() -> None:
     """Test AnthropicClient initialization when API key is missing."""
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
-        mock_load.return_value = {
-            "api_key": None,
-            "chat_model_id": "claude-3-5-sonnet-20241022",
-        }
+        mock_load.side_effect = SettingNotFoundError("Required setting 'api_key' was not provided.")
 
-        with pytest.raises(ValueError, match="Anthropic API key is required"):
+        with pytest.raises(SettingNotFoundError, match="api_key"):
             AnthropicClient()
 
 

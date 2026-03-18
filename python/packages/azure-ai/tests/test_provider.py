@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
+from agent_framework.exceptions import SettingNotFoundError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentVersionDetails,
@@ -17,6 +18,8 @@ from azure.ai.projects.models import (
 from azure.identity.aio import AzureCliCredential
 
 from agent_framework_azure_ai import AzureAIProjectAgentProvider
+
+pytestmark = pytest.mark.filterwarnings("ignore:'AzureAIProjectAgentProvider' is deprecated:DeprecationWarning")
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
@@ -71,7 +74,8 @@ def azure_ai_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 def test_provider_init_with_project_client(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider initialization with existing project_client."""
-    provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+    with pytest.warns(DeprecationWarning, match="AzureAIProjectAgentProvider"):
+        provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
     assert provider._project_client is mock_project_client  # type: ignore
     assert not provider._should_close_client  # type: ignore
@@ -101,9 +105,9 @@ def test_provider_init_with_credential_and_endpoint(
 def test_provider_init_missing_endpoint() -> None:
     """Test AzureAIProjectAgentProvider initialization when endpoint is missing."""
     with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
-        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
+        mock_load_settings.side_effect = SettingNotFoundError("Required setting 'project_endpoint' was not provided.")
 
-        with pytest.raises(ValueError, match="Azure AI project endpoint is required"):
+        with pytest.raises(SettingNotFoundError, match="project_endpoint"):
             AzureAIProjectAgentProvider(credential=MagicMock())
 
 
@@ -415,10 +419,7 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
         mock_azure_ai_client.assert_called_once()
         call_kwargs = mock_azure_ai_client.call_args[1]
         assert call_kwargs["project_client"] is mock_project_client
-        assert call_kwargs["agent_name"] == "test-agent"
-        assert call_kwargs["agent_version"] == "1.0"
-        assert call_kwargs["agent_description"] == "Test Agent"
-        assert call_kwargs["model_deployment_name"] == "gpt-4"
+        assert call_kwargs["details"] is mock_agent_version
 
 
 def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: MagicMock) -> None:

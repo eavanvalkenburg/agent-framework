@@ -13,7 +13,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -36,7 +36,7 @@ Demonstrates:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Azure OpenAI configured for OpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -100,9 +100,10 @@ async def enrich_with_references(
 async def main() -> None:
     """Run the workflow and stream combined updates from both agents."""
     # Create the agents
-    research_agent = AzureOpenAIResponsesClient(
+    research_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="research_agent",
@@ -111,9 +112,10 @@ async def main() -> None:
         ),
     )
 
-    final_editor_agent = AzureOpenAIResponsesClient(
+    final_editor_agent = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
         name="final_editor_agent",

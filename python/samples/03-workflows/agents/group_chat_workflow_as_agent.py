@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ What it does:
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for `AzureOpenAIResponsesClient`.
+- Environment variables configured for `OpenAIResponsesClient`.
 """
 
 
@@ -30,9 +30,10 @@ async def main() -> None:
         name="Researcher",
         description="Collects relevant background information.",
         instructions="Gather concise facts that help a teammate answer the question.",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
@@ -41,9 +42,10 @@ async def main() -> None:
         name="Writer",
         description="Synthesizes a polished answer using the gathered notes.",
         instructions="Compose clear and structured answers using any notes provided.",
-        client=AzureOpenAIResponsesClient(
+        client=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
@@ -53,9 +55,10 @@ async def main() -> None:
     workflow = GroupChatBuilder(
         participants=[researcher, writer],
         intermediate_outputs=True,
-        orchestrator_agent=AzureOpenAIResponsesClient(
+        orchestrator_agent=OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ).as_agent(
             name="Orchestrator",

@@ -19,9 +19,10 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ChatClientException
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.exceptions import ChatClientException, SettingNotFoundError
+from agent_framework.openai import AzureOpenAIChatOptions, AzureUserSecurityContext, OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
+from agent_framework.openai._shared import OpenAIBase, OpenAIConfigMixin
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -35,6 +36,17 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
     assert open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
+
+
+def test_init_mro_excludes_openai_config_mixin() -> None:
+    assert OpenAIConfigMixin not in OpenAIChatClient.__mro__
+    assert OpenAIBase not in OpenAIChatClient.__mro__
+
+
+def test_openai_module_exports_azure_chat_options() -> None:
+    assert "data_sources" in AzureOpenAIChatOptions.__annotations__
+    assert "AzureUserSecurityContext" in repr(AzureOpenAIChatOptions.__annotations__["user_security_context"])
+    assert "application_name" in AzureUserSecurityContext.__annotations__
 
 
 def test_init_validation_fail() -> None:
@@ -93,7 +105,7 @@ def test_init_base_url_from_settings_env() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError, match="chat_model_id"):
         OpenAIChatClient()
 
 
@@ -101,7 +113,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError, match="api_key"):
         OpenAIChatClient(
             model_id=model_id,
         )

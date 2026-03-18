@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
-from typing import Any, ClassVar, Union, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union, cast
 
 import openai
+from dotenv import dotenv_values
 from openai import (
     AsyncOpenAI,
     AsyncStream,
@@ -23,9 +26,13 @@ from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
 
 from .._serialization import SerializationMixin
-from .._settings import SecretString
-from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
+from .._settings import SecretString, load_settings
+from .._telemetry import AGENT_FRAMEWORK_USER_AGENT, APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool
+from ..azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
+
+if TYPE_CHECKING:
+    from ..azure._shared import AzureOpenAISettings
 
 logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
@@ -44,6 +51,8 @@ RESPONSE_TYPE = Union[
 ]
 
 OPTION_TYPE = dict[str, Any]
+OpenAIChatBackend = Literal["openai", "azure_openai"]
+OpenAIResponsesBackend = Literal["openai", "azure_openai", "foundry", "foundry_hosted_agent"]
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -72,6 +81,101 @@ def _check_openai_version_for_callable_api_key() -> None:
         raise  # Re-raise our own exception
     except Exception as e:
         logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
+
+
+def _resolve_env_value(
+    *env_var_names: str,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> str | None:
+    """Resolve the first matching environment variable from dotenv or process env."""
+    if env_file_path:
+        loaded_values = dotenv_values(dotenv_path=env_file_path, encoding=env_file_encoding or "utf-8")
+        for env_var_name in env_var_names:
+            dotenv_value = loaded_values.get(env_var_name)
+            if dotenv_value is not None:
+                return str(dotenv_value)
+
+    for env_var_name in env_var_names:
+        env_value = os.getenv(env_var_name)
+        if env_value is not None:
+            return env_value
+    return None
+
+
+def resolve_responses_model_id(
+    *,
+    model_id: str | None,
+    backend: OpenAIResponsesBackend,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> str | None:
+    """Resolve the responses model/deployment identifier for the selected backend."""
+    env_names = (
+        ("OPENAI_RESPONSES_MODEL_ID",)
+        if backend == "openai"
+        else ("RESPONSES_DEPLOYMENT_NAME", "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    )
+    settings = load_settings(
+        _ModelIdSetting,
+        model_id=model_id,
+        env_var_names={"model_id": env_names},
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
+    return settings.get("model_id")
+
+
+def load_azure_openai_settings(
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    endpoint: str | None = None,
+    api_version: str | None = None,
+    token_endpoint: str | None = None,
+    chat_deployment_name: str | None = None,
+    responses_deployment_name: str | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+    required_fields: Sequence[str | tuple[str, ...]] | None = None,
+) -> AzureOpenAISettings:
+    """Load Azure OpenAI settings with support for SDK-native env var aliases."""
+    from ..azure._shared import AzureOpenAISettings
+
+    if api_version is None:
+        sdk_api_version = _resolve_env_value(
+            "OPENAI_API_VERSION",
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        legacy_api_version = _resolve_env_value(
+            "AZURE_OPENAI_API_VERSION",
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        if sdk_api_version is None and legacy_api_version is not None:
+            # TODO(Copilot): Delete once ``AZURE_OPENAI_API_VERSION`` compatibility is removed.
+            warnings.warn(
+                "Using 'AZURE_OPENAI_API_VERSION' is deprecated; prefer 'OPENAI_API_VERSION'.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+    return load_settings(
+        AzureOpenAISettings,
+        env_prefix="AZURE_OPENAI_",
+        api_key=api_key,
+        base_url=base_url,
+        endpoint=endpoint,
+        chat_deployment_name=chat_deployment_name,
+        responses_deployment_name=responses_deployment_name,
+        token_endpoint=token_endpoint,
+        api_version=api_version,
+        env_var_names={"api_version": ("OPENAI_API_VERSION", "AZURE_OPENAI_API_VERSION")},
+        required_fields=required_fields,
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
 
 
 class OpenAISettings(TypedDict, total=False):
@@ -118,6 +222,10 @@ class OpenAISettings(TypedDict, total=False):
     chat_model_id: str | None
     responses_model_id: str | None
     embedding_model_id: str | None
+
+
+class _ModelIdSetting(TypedDict, total=False):
+    model_id: str | None
 
 
 class OpenAIBase(SerializationMixin):
@@ -178,26 +286,82 @@ class OpenAIBase(SerializationMixin):
 
         return self.client
 
-    def _get_api_key(
-        self, api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None
-    ) -> str | Callable[[], str | Awaitable[str]] | None:
-        """Get the appropriate API key value for client initialization.
 
-        Args:
-            api_key: The API key parameter which can be a string, SecretString, callable, or None.
+def normalize_openai_api_key(
+    api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None,
+) -> str | Callable[[], str | Awaitable[str]] | None:
+    """Normalize OpenAI API-key input for SDK client construction."""
+    if isinstance(api_key, SecretString):
+        return api_key.get_secret_value()
 
-        Returns:
-            For callable API keys: returns the callable directly.
-            For SecretString/string/None API keys: returns as-is (SecretString is a str subclass).
-        """
-        if isinstance(api_key, SecretString):
-            return api_key.get_secret_value()
+    if callable(api_key):
+        _check_openai_version_for_callable_api_key()
 
-        # Check version compatibility for callable API keys
-        if callable(api_key):
-            _check_openai_version_for_callable_api_key()
+    return api_key
 
-        return api_key  # Pass callable, string, or None directly to OpenAI SDK
+
+def serialize_openai_default_headers(default_headers: Mapping[str, str] | None) -> dict[str, Any] | None:
+    """Serialize default headers while omitting generated user-agent values."""
+    if default_headers:
+        return {k: v for k, v in default_headers.items() if k != USER_AGENT_KEY}
+    return None
+
+
+def create_openai_client(
+    *,
+    api_key: str | Callable[[], str | Awaitable[str]] | None,
+    org_id: str | None,
+    default_headers: Mapping[str, str] | None,
+    client: AsyncOpenAI | None,
+    base_url: str | None,
+) -> AsyncOpenAI:
+    """Create or reuse an AsyncOpenAI client with Agent Framework headers applied."""
+    merged_headers = dict(copy(default_headers)) if default_headers else {}
+    if APP_INFO:
+        merged_headers.update(APP_INFO)
+        merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+
+    if client is not None:
+        return client
+
+    if not api_key:
+        raise ValueError("Please provide an api_key")
+
+    args: dict[str, Any] = {"api_key": api_key, "default_headers": merged_headers}
+    if org_id:
+        args["organization"] = org_id
+    if base_url:
+        args["base_url"] = base_url
+    return AsyncOpenAI(**args)
+
+
+def create_openai_client_from_project(
+    *,
+    project_client: Any | None,
+    project_endpoint: str | None,
+    credential: AzureCredentialTypes | AzureTokenProvider | None,
+    allow_preview: bool | None = None,
+) -> AsyncOpenAI:
+    """Create an AsyncOpenAI client from an Azure AI Foundry project."""
+    from azure.ai.projects.aio import AIProjectClient
+
+    if project_client is not None:
+        return project_client.get_openai_client()
+
+    if not project_endpoint:
+        raise ValueError("Azure AI project endpoint is required when project_client is not provided.")
+    if not credential:
+        raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
+
+    project_client_kwargs: dict[str, Any] = {
+        "endpoint": project_endpoint,
+        "credential": credential,  # type: ignore[arg-type]
+        "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+    }
+    if allow_preview is not None:
+        project_client_kwargs["allow_preview"] = allow_preview
+
+    return AIProjectClient(**project_client_kwargs).get_openai_client()
 
 
 class OpenAIConfigMixin(OpenAIBase):
@@ -238,35 +402,20 @@ class OpenAIConfigMixin(OpenAIBase):
             kwargs: Additional keyword arguments.
 
         """
-        # Merge APP_INFO into the headers if it exists
-        merged_headers = dict(copy(default_headers)) if default_headers else {}
-        if APP_INFO:
-            merged_headers.update(APP_INFO)
-            merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
-
         # Handle callable API key using base class method
-        api_key_value = self._get_api_key(api_key)
-
-        if not client:
-            if not api_key:
-                raise ValueError("Please provide an api_key")
-            args: dict[str, Any] = {"api_key": api_key_value, "default_headers": merged_headers}
-            if org_id:
-                args["organization"] = org_id
-            if base_url:
-                args["base_url"] = base_url
-            client = AsyncOpenAI(**args)
+        api_key_value = normalize_openai_api_key(api_key)
+        client = create_openai_client(
+            api_key=api_key_value,
+            org_id=org_id,
+            default_headers=default_headers,
+            client=client,
+            base_url=base_url,
+        )
 
         # Store configuration as instance attributes for serialization
         self.org_id = org_id
         self.base_url = str(base_url)
-        # Store default_headers but filter out USER_AGENT_KEY for serialization
-        if default_headers:
-            self.default_headers: dict[str, Any] | None = {
-                k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
-            }
-        else:
-            self.default_headers = None
+        self.default_headers = serialize_openai_default_headers(default_headers)
 
         args = {
             "model_id": model_id,

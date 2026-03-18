@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import AgentSession, BaseContextProvider, SessionContext
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext
+from agent_framework.openai import OpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -68,19 +68,23 @@ class UserMemoryProvider(BaseContextProvider):
             text = msg.text if hasattr(msg, "text") else ""
             if isinstance(text, str) and "my name is" in text.lower():
                 state["user_name"] = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
+
+
 # </context_provider>
 
 
 async def main() -> None:
     # <create_agent>
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = OpenAIResponsesClient(
+        backend="foundry",
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MemoryAgent",
         instructions="You are a friendly assistant.",
         context_providers=[UserMemoryProvider()],

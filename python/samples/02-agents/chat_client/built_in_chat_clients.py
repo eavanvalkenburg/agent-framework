@@ -70,10 +70,6 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     """Create a built-in chat client from a name."""
     from agent_framework.amazon import BedrockChatClient
     from agent_framework.anthropic import AnthropicClient
-    from agent_framework.azure import (
-        AzureOpenAIChatClient,
-        AzureOpenAIResponsesClient,
-    )
     from agent_framework.ollama import OllamaChatClient
     from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
@@ -93,13 +89,14 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
 
     # 2. Create Azure OpenAI clients.
     if client_name == "azure_openai_chat":
-        return AzureOpenAIChatClient(credential=AzureCliCredential())
+        return OpenAIChatClient(backend="azure_openai", credential=AzureCliCredential())
     if client_name == "azure_openai_responses":
-        return AzureOpenAIResponsesClient(credential=AzureCliCredential(), api_version="preview")
+        return OpenAIResponsesClient(backend="azure_openai", credential=AzureCliCredential(), api_version="preview")
     if client_name == "azure_openai_responses_foundry":
-        return AzureOpenAIResponsesClient(
+        return OpenAIResponsesClient(
+            backend="foundry",
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+            model_id=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         )
     if client_name == "azure_openai_assistants":

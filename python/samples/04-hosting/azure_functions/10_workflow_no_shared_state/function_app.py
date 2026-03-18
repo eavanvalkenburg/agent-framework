@@ -31,7 +31,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -165,7 +165,7 @@ def is_spam_detected(message: Any) -> bool:
 def _create_workflow() -> Workflow:
     """Create the workflow definition."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = OpenAIChatClient(backend="azure_openai", **client_kwargs)
 
     spam_agent = chat_client.as_agent(
         name=SPAM_AGENT_NAME,
