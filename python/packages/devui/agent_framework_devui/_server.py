@@ -1146,6 +1146,653 @@ class DevServer:
         )
         _ = registered_route_handlers
 
+        # ============================================================================
+        # Datastar Lite UI — Experimental SSE-driven chat interface
+        # ============================================================================
+
+        @app.get("/lite/api/entities")
+        async def datastar_entities() -> StreamingResponse:
+            """Return entity list as Datastar patch-elements to populate the selector."""
+            from ._datastar import _patch_elements, _patch_signals
+
+            executor = await self._ensure_executor()
+            entities = executor.entity_discovery.list_entities()
+
+            options_html = '<option value="">Select an agent…</option>'
+            for entity in entities:
+                eid = entity.id
+                name = entity.name or eid
+                etype = entity.type or "agent"
+                options_html += f'<option value="{eid}">{name} ({etype})</option>'
+
+            # Build select with on-change that fetches entity info
+            select_html = (
+                f'<select id="entity-select" data-bind:entity-id'
+                f" data-on:change=\"@get('/lite/api/entities/info')\""
+                f">{options_html}</select>"
+            )
+            content = _patch_elements(select_html)
+
+            # Auto-select the first entity and create initial session
+            if entities:
+                entity = entities[0]
+                conversation = executor.conversation_store.create_conversation(metadata={"entity_id": entity.id})
+                conv_id = conversation.id
+                short_id = conv_id[-8:]
+
+                # Build session selector
+                sessions_html = await self._build_session_selector(executor, entity.id, conv_id)
+                content += sessions_html
+
+                content += _patch_signals({
+                    "entityId": entity.id,
+                    "entityName": entity.name or entity.id,
+                    "entityDesc": entity.description or "",
+                    "entityType": entity.type or "agent",
+                    "sessionId": conv_id,
+                    "sessionShortId": short_id,
+                })
+
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        @app.get("/lite/api/entities/info")
+        async def datastar_entity_info(raw_request: Request) -> StreamingResponse:
+            """Return entity name/description/type as signals when selection changes.
+
+            For workflows, also triggers workflow-info fetch by including DAG
+            and input form patches inline.
+            """
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import (
+                _patch_elements,
+                _patch_signals,
+                build_dag_html,
+            )
+
+            signals = await read_signals(raw_request)
+            entity_id = (signals or {}).get("entityId", "")
+
+            if not entity_id:
+                content = _patch_signals({"entityName": "", "entityDesc": "", "entityType": "agent"})
+            else:
+                executor = await self._ensure_executor()
+                try:
+                    info = executor.get_entity_info(entity_id)
+                    entity_type = info.type or "agent"
+                    content = _patch_signals({
+                        "entityName": info.name or entity_id,
+                        "entityDesc": info.description or "",
+                        "entityType": entity_type,
+                    })
+
+                    # Reset sidebar and counters on entity switch
+                    content += _patch_elements('<div id="events-list"></div>')
+                    content += _patch_elements('<div id="trace-turns"></div>')
+                    content += _patch_elements('<div id="ctx-summary"></div>')
+                    content += _patch_elements('<div id="tools-list"></div>')
+                    content += _patch_signals({
+                        "eventCount": 0,
+                        "rawCount": 0,
+                        "toolCount": 0,
+                        "traceCount": 0,
+                        "sessionInput": 0,
+                        "sessionOutput": 0,
+                        "turnCount": 0,
+                        "userInput": "",
+                        "error": "",
+                    })
+
+                    # For workflows, also load DAG and input form
+                    if entity_type == "workflow":
+                        try:
+                            await executor.entity_discovery.load_entity(
+                                entity_id, checkpoint_manager=executor.checkpoint_manager
+                            )
+                            info = executor.get_entity_info(entity_id) or info
+                        except Exception as e:
+                            logger.warning(f"Failed to load workflow {entity_id}: {e}")
+
+                        executors_list = info.executors or []
+                        input_type_name = info.input_type_name or "string"
+
+                        executor_classes: dict[str, str] = {}
+                        edges: list[tuple[str, str]] | None = None
+                        if info.workflow_dump and isinstance(info.workflow_dump, dict):
+                            dump_executors = info.workflow_dump.get("executors", [])
+                            if isinstance(dump_executors, list):
+                                for ex in dump_executors:
+                                    if isinstance(ex, dict):
+                                        eid = ex.get("executor_id", "") or ex.get("id", "")
+                                        etype = ex.get("type", "") or ex.get("class", "Executor")
+                                        if eid:
+                                            executor_classes[eid] = etype
+                            dump_edges = info.workflow_dump.get("edges", [])
+                            if isinstance(dump_edges, list):
+                                parsed_edges: list[tuple[str, str]] = []
+                                for edge in dump_edges:
+                                    if isinstance(edge, dict):
+                                        src = edge.get("source", "") or edge.get("from", "")
+                                        tgt = edge.get("target", "") or edge.get("to", "")
+                                        if src and tgt:
+                                            parsed_edges.append((src, tgt))
+                                if parsed_edges:
+                                    edges = parsed_edges
+
+                        content += _patch_elements(
+                            build_dag_html(executors_list, edges, executor_classes=executor_classes)
+                        )
+                        content += _patch_elements(
+                            '<div id="workflow-timeline" class="wf-timeline">'
+                            '<div class="sidebar-empty">Ready to run workflow</div></div>'
+                        )
+                        content += _patch_signals({
+                            "timelineCount": 0,
+                            "workflowRunning": False,
+                            "inputTypeName": input_type_name,
+                        })
+
+                except Exception:
+                    content = _patch_signals({"entityName": entity_id, "entityDesc": "", "entityType": "agent"})
+
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        @app.get("/lite/api/entities/workflow")
+        async def datastar_workflow_info(raw_request: Request) -> StreamingResponse:
+            """Return workflow DAG and input form as Datastar patches."""
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import (
+                _patch_elements,
+                _patch_signals,
+                build_dag_html,
+            )
+
+            signals = await read_signals(raw_request)
+            entity_id = (signals or {}).get("entityId", "")
+
+            if not entity_id:
+                content = _patch_signals({"error": "No entity selected"})
+                return StreamingResponse(
+                    iter([content]),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
+
+            executor = await self._ensure_executor()
+            info = executor.get_entity_info(entity_id)
+
+            if not info or info.type != "workflow":
+                content = _patch_signals({"error": "Selected entity is not a workflow"})
+                return StreamingResponse(
+                    iter([content]),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
+
+            # Trigger lazy loading to get full workflow details
+            try:
+                await executor.entity_discovery.load_entity(entity_id, checkpoint_manager=executor.checkpoint_manager)
+                info = executor.get_entity_info(entity_id) or info
+            except Exception as e:
+                logger.warning(f"Failed to load workflow {entity_id}: {e}")
+
+            executors_list = info.executors or []
+            input_type_name = info.input_type_name or "string"
+
+            # Extract executor class names from workflow dump if available
+            executor_classes: dict[str, str] = {}
+            if info.workflow_dump and isinstance(info.workflow_dump, dict):
+                dump_executors = info.workflow_dump.get("executors", [])
+                if isinstance(dump_executors, list):
+                    for ex in dump_executors:
+                        if isinstance(ex, dict):
+                            eid = ex.get("executor_id", "") or ex.get("id", "")
+                            etype = ex.get("type", "") or ex.get("class", "Executor")
+                            if eid:
+                                executor_classes[eid] = etype
+
+            # Extract edges from workflow dump
+            edges: list[tuple[str, str]] | None = None
+            if info.workflow_dump and isinstance(info.workflow_dump, dict):
+                dump_edges = info.workflow_dump.get("edges", [])
+                if isinstance(dump_edges, list):
+                    parsed_edges: list[tuple[str, str]] = []
+                    for edge in dump_edges:
+                        if isinstance(edge, dict):
+                            src = edge.get("source", "") or edge.get("from", "")
+                            tgt = edge.get("target", "") or edge.get("to", "")
+                            if src and tgt:
+                                parsed_edges.append((src, tgt))
+                    if parsed_edges:
+                        edges = parsed_edges
+
+            dag_html = build_dag_html(executors_list, edges, executor_classes=executor_classes)
+
+            content = (
+                _patch_elements(dag_html)
+                + _patch_elements(
+                    '<div id="workflow-timeline" class="wf-timeline">'
+                    '<div class="sidebar-empty">Ready to run workflow</div></div>'
+                )
+                + _patch_signals({
+                    "timelineCount": 0,
+                    "workflowRunning": False,
+                    "inputTypeName": input_type_name,
+                    "error": "",
+                })
+            )
+
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        @app.post("/lite/api/responses")
+        async def datastar_responses(raw_request: Request) -> StreamingResponse:
+            """Unified response endpoint — handles both agent chat and workflow execution."""
+            import uuid as _uuid
+
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import (
+                _append_elements,
+                _now_str,
+                _patch_elements,
+                _patch_signals,
+                _user_avatar,
+                stream_as_datastar,
+                stream_workflow_as_datastar,
+            )
+
+            signals = await read_signals(raw_request)
+            if not signals:
+                try:
+                    signals = await raw_request.json()
+                except Exception:
+                    signals = {}
+
+            entity_id = signals.get("entityId", "")
+            user_input = signals.get("userInput", "")
+            entity_type = signals.get("entityType", "agent")
+
+            if not entity_id or not user_input:
+                error_content = _patch_signals({
+                    "isStreaming": False,
+                    "workflowRunning": False,
+                    "error": "Missing entity or input",
+                })
+                return StreamingResponse(
+                    iter([error_content]),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
+
+            executor = await self._ensure_executor()
+            session_id = signals.get("sessionId", "")
+            prev_event_count = int(signals.get("eventCount", 0) or 0)
+            prev_trace_count = int(signals.get("traceCount", 0) or 0)
+
+            response_id = f"resp_{_uuid.uuid4().hex[:8]}"
+            request = AgentFrameworkRequest(
+                model=entity_id,
+                input=user_input,
+                stream=True,
+                metadata={"entity_id": entity_id},
+                extra_body={"response_id": response_id},
+                conversation=session_id if session_id else None,
+            )
+
+            if entity_type == "workflow":
+                # --- Workflow execution ---
+                info = executor.get_entity_info(entity_id)
+                executor_ids = info.executors if info else None
+
+                async def _wf_generate() -> AsyncGenerator[str]:
+                    yield _patch_signals({"userInput": ""})
+                    yield _patch_elements('<div id="workflow-timeline" class="wf-timeline"></div>')
+                    async for chunk in stream_workflow_as_datastar(
+                        executor,
+                        request,
+                        executor_ids=executor_ids,
+                        prev_event_count=prev_event_count,
+                        prev_trace_count=prev_trace_count,
+                    ):
+                        yield chunk
+
+                return StreamingResponse(
+                    _wf_generate(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                )
+
+            # --- Agent chat execution ---
+            import html as _html
+
+            prev_tool_count = int(signals.get("toolCount", 0) or 0)
+            prev_session_input = int(signals.get("sessionInput", 0) or 0)
+            prev_session_output = int(signals.get("sessionOutput", 0) or 0)
+            prev_turn_count = int(signals.get("turnCount", 0) or 0)
+
+            user_msg_id = f"user-{_uuid.uuid4().hex[:8]}"
+
+            async def _chat_generate() -> AsyncGenerator[str]:
+                yield _patch_signals({"pendingMsg": "", "userInput": ""})
+                yield _patch_elements('<div id="welcome" style="display:none"></div>')
+                ts = _now_str()
+                yield _append_elements(
+                    "#chat-area",
+                    f'<div id="{user_msg_id}" class="msg-row msg-row-user">'
+                    f'<div class="msg-col">'
+                    f'<div class="message user-message">'
+                    f"{_html.escape(user_input)}"
+                    f"</div>"
+                    f'<div class="msg-meta msg-meta-right">{ts}</div>'
+                    f"</div>"
+                    f"{_user_avatar()}"
+                    f"</div>",
+                )
+                async for chunk in stream_as_datastar(
+                    executor,
+                    request,
+                    prev_tool_count=prev_tool_count,
+                    prev_trace_count=prev_trace_count,
+                    prev_event_count=prev_event_count,
+                    prev_session_input=prev_session_input,
+                    prev_session_output=prev_session_output,
+                    prev_turn_count=prev_turn_count,
+                ):
+                    yield chunk
+
+            return StreamingResponse(
+                _chat_generate(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+
+        @app.get("/lite/api/sessions/new")
+        async def datastar_new_session(raw_request: Request) -> StreamingResponse:
+            """Create a new conversation and reset the UI."""
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import _patch_elements, _patch_signals
+
+            signals = await read_signals(raw_request)
+            entity_id = (signals or {}).get("entityId", "")
+
+            # Create a conversation via the existing API
+            executor = await self._ensure_executor()
+            metadata = {"entity_id": entity_id} if entity_id else {}
+            conversation = executor.conversation_store.create_conversation(metadata=metadata)
+            conv_id = conversation.id
+            short_id = conv_id[-8:]
+
+            # Build updated session selector
+            sessions_html = await self._build_session_selector(executor, entity_id, conv_id)
+
+            content = (
+                # Replace session selector
+                sessions_html
+                # Reset the chat area
+                + _patch_elements(
+                    '<div id="chat-area" class="chat-area">'
+                    '<div id="welcome" class="welcome-text">'
+                    '<span class="wt">Start a new session</span>'
+                    "<span>Type a message below to begin</span>"
+                    "</div></div>"
+                )
+                # Reset sidebar lists
+                + _patch_elements('<div id="events-list"></div>')
+                + _patch_elements('<div id="trace-turns"></div>')
+                + _patch_elements('<div id="ctx-summary"></div>')
+                + _patch_elements('<div id="tools-list"></div>')
+                # Update signals
+                + _patch_signals({
+                    "sessionId": conv_id,
+                    "sessionShortId": short_id,
+                    "isStreaming": False,
+                    "error": "",
+                    "eventCount": 0,
+                    "rawCount": 0,
+                    "toolCount": 0,
+                    "traceCount": 0,
+                    "sessionInput": 0,
+                    "sessionOutput": 0,
+                    "turnCount": 0,
+                    "pendingMsg": "",
+                    "userInput": "",
+                })
+            )
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        @app.get("/lite/api/sessions/switch")
+        async def datastar_switch_session(raw_request: Request) -> StreamingResponse:
+            """Switch to an existing session — reload chat history."""
+            import html as _html
+
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import (
+                _bot_avatar,
+                _patch_elements,
+                _patch_signals,
+                _user_avatar,
+                render_markdown,
+            )
+
+            signals = await read_signals(raw_request)
+            conv_id = (signals or {}).get("sessionId", "")
+
+            if not conv_id:
+                content = _patch_signals({"error": "No session selected"})
+                return StreamingResponse(
+                    iter([content]),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
+
+            executor = await self._ensure_executor()
+            short_id = conv_id[-8:]
+
+            # Load conversation items
+            items_list, _has_more = await executor.conversation_store.list_items(conv_id, limit=100, order="asc")
+
+            # Build chat area HTML from history
+            chat_html = ""
+            for item in items_list:
+                # Items may be dicts or Pydantic models
+                if hasattr(item, "model_dump"):
+                    item = item.model_dump()
+                role = item.get("role", "")
+                content_parts = item.get("content", [])
+                item_type = item.get("type", "message")
+
+                if item_type != "message":
+                    continue
+
+                text = ""
+                for part in content_parts:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text += part.get("text", "")
+                    elif isinstance(part, str):
+                        text += part
+
+                if not text:
+                    continue
+
+                item_id = item.get("id", "hist")
+
+                if role == "user":
+                    chat_html += (
+                        f'<div id="{item_id}" class="msg-row msg-row-user" style="align-self:flex-end">'
+                        f'<div class="msg-col">'
+                        f'<div class="message user-message">{_html.escape(text)}</div>'
+                        f"</div>"
+                        f"{_user_avatar()}"
+                        f"</div>"
+                    )
+                elif role == "assistant":
+                    rendered = render_markdown(text)
+                    chat_html += (
+                        f'<div id="{item_id}" class="msg-row">'
+                        f"{_bot_avatar()}"
+                        f'<div class="msg-col">'
+                        f'<div class="message assistant-message">'
+                        f'<div class="prose">{rendered}</div>'
+                        f"</div></div></div>"
+                    )
+
+            if not chat_html:
+                chat_html = (
+                    '<div id="welcome" class="welcome-text">'
+                    '<span class="wt">Session restored</span>'
+                    "<span>Type a message to continue</span>"
+                    "</div>"
+                )
+
+            content = (
+                _patch_elements(f'<div id="chat-area" class="chat-area">{chat_html}</div>')
+                + _patch_elements('<div id="events-list"></div>')
+                + _patch_elements('<div id="trace-turns"></div>')
+                + _patch_elements('<div id="ctx-summary"></div>')
+                + _patch_elements('<div id="tools-list"></div>')
+                + _patch_signals({
+                    "sessionId": conv_id,
+                    "sessionShortId": short_id,
+                    "isStreaming": False,
+                    "error": "",
+                    "eventCount": 0,
+                    "rawCount": 0,
+                    "toolCount": 0,
+                    "traceCount": 0,
+                    "sessionInput": 0,
+                    "sessionOutput": 0,
+                    "turnCount": 0,
+                    "pendingMsg": "",
+                    "userInput": "",
+                })
+            )
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        @app.delete("/lite/api/sessions/current")
+        async def datastar_delete_session(raw_request: Request) -> StreamingResponse:
+            """Delete the current session and switch to the most recent remaining one."""
+            from datastar_py.fastapi import read_signals
+
+            from ._datastar import _patch_elements, _patch_signals
+
+            signals = await read_signals(raw_request)
+            entity_id = (signals or {}).get("entityId", "")
+            session_id = (signals or {}).get("sessionId", "")
+
+            executor = await self._ensure_executor()
+
+            # Delete the current conversation
+            if session_id:
+                try:
+                    await executor.conversation_store.delete_conversation(session_id)
+                except Exception:
+                    logger.debug(f"Could not delete conversation {session_id}")
+
+            # Find remaining sessions for this entity
+            filters: dict[str, str] = {}
+            if entity_id:
+                filters["entity_id"] = entity_id
+            conv_list = await executor.conversation_store.list_conversations_by_metadata(filters)
+
+            if conv_list:
+                # Switch to the most recent remaining session
+                new_conv = conv_list[0]
+                new_id = new_conv.id
+                new_short = new_id[-8:]
+            else:
+                # No sessions left — create a new one
+                metadata = {"entity_id": entity_id} if entity_id else {}
+                new_conv_obj = executor.conversation_store.create_conversation(metadata=metadata)
+                new_id = new_conv_obj.id
+                new_short = new_id[-8:]
+
+            sessions_html = await self._build_session_selector(executor, entity_id, new_id)
+
+            content = (
+                sessions_html
+                + _patch_elements(
+                    '<div id="chat-area" class="chat-area">'
+                    '<div id="welcome" class="welcome-text">'
+                    '<span class="wt">Session deleted</span>'
+                    "<span>Type a message to begin a new conversation</span>"
+                    "</div></div>"
+                )
+                + _patch_elements('<div id="events-list"></div>')
+                + _patch_elements('<div id="trace-turns"></div>')
+                + _patch_elements('<div id="ctx-summary"></div>')
+                + _patch_elements('<div id="tools-list"></div>')
+                + _patch_signals({
+                    "sessionId": new_id,
+                    "sessionShortId": new_short,
+                    "isStreaming": False,
+                    "error": "",
+                    "eventCount": 0,
+                    "rawCount": 0,
+                    "toolCount": 0,
+                    "traceCount": 0,
+                    "sessionInput": 0,
+                    "sessionOutput": 0,
+                    "turnCount": 0,
+                    "pendingMsg": "",
+                    "userInput": "",
+                })
+            )
+            return StreamingResponse(
+                iter([content]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+    async def _build_session_selector(
+        self,
+        executor: AgentFrameworkExecutor,
+        entity_id: str,
+        selected_id: str,
+    ) -> str:
+        """Build the session dropdown HTML as a patch-elements event."""
+        from ._datastar import _patch_elements
+
+        filters: dict[str, str] = {}
+        if entity_id:
+            filters["entity_id"] = entity_id
+        conv_list = await executor.conversation_store.list_conversations_by_metadata(filters)
+
+        options = ""
+        for conv in conv_list:
+            cid = conv.id
+            short = cid[-8:]
+            sel = " selected" if cid == selected_id else ""
+            options += f'<option value="{cid}"{sel}>Session {short}</option>'
+
+        return _patch_elements(
+            f'<select id="session-select" data-bind:session-id'
+            f" data-on:change=\"@get('/lite/api/sessions/switch')\""
+            f">{options}</select>"
+        )
+
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
     ) -> AsyncGenerator[str]:
@@ -1375,6 +2022,11 @@ class DevServer:
 
         ui_dir = Path(__file__).parent / "ui"
         if ui_dir.exists() and ui_dir.is_dir() and self.ui_enabled:
+            # Mount the lite Datastar UI first (more specific path)
+            lite_dir = ui_dir / "lite"
+            if lite_dir.exists() and lite_dir.is_dir():
+                app.mount("/lite", StaticFiles(directory=str(lite_dir), html=True), name="lite-ui")
+            # Mount the main React UI at root
             app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     def register_entities(self, entities: list[Any]) -> None:

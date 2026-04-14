@@ -440,7 +440,9 @@ version = "1.0.0b260311"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "datastar-py", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mistune", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -459,7 +461,9 @@ dev = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-orchestrations", marker = "extra == 'dev'", editable = "packages/orchestrations" },
+    { name = "datastar-py", specifier = ">=0.4.0,<1.0.0" },
     { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
+    { name = "mistune", specifier = ">=3.1.0,<4.0.0" },
     { name = "pytest", marker = "extra == 'all'", specifier = "==9.0.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<0.42.0" },
@@ -1782,6 +1786,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a9/95/a3dbbb5028f35eafb79008e7522a75244477d2838f38cbb722248dabc2a8/cycler-0.12.1.tar.gz", hash = "sha256:88bb128f02ba341da8ef447245a9e138fae777f6a23943da4540077d3601eb1c", size = 7615, upload-time = "2023-10-07T05:32:18.335Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl", hash = "sha256:85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30", size = 8321, upload-time = "2023-10-07T05:32:16.783Z" },
+]
+
+[[package]]
+name = "datastar-py"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e3/28f8b1ba914302378fdec7050a11ca69e937f000ba16b9c9f8aaf8f8667e/datastar_py-0.8.0.tar.gz", hash = "sha256:a6893608da32378ae22640c115c80e50b2e905db1a2adca840d1ee6b1009b308", size = 137445, upload-time = "2025-12-19T19:43:53.802Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/9c/2d805013718a5e90e1574e54b5eef6e64955c7c0f319d1ef9fc4dcdd6a79/datastar_py-0.8.0-py3-none-any.whl", hash = "sha256:637b557d163ad31d1b1c8ecf13c02ae33cd5134ec3f606ed38d0cefcac675d54", size = 19023, upload-time = "2025-12-19T19:43:52.626Z" },
 ]
 
 [[package]]
@@ -3449,6 +3462,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6a/14/a1365e0bab1486c2d16aabeb192ca90715794edf4e68be4815c245884420/microsoft_agents_hosting_core-0.3.1.tar.gz", hash = "sha256:0b76bda10e7a54ff3c86e56cbabaad5ac7a4c2a076c9833af3b2f4c86fa85e89", size = 81137, upload-time = "2025-09-09T23:19:46.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/1b/543ddaa2daf8593911a02a07a6a78366d4a6a0053ec86a557c19fa97b60e/microsoft_agents_hosting_core-0.3.1-py3-none-any.whl", hash = "sha256:a4b41556b15321b74f539c5a0a89f70955459b7ec57e9e4b24e61bba27f1cbbc", size = 94573, upload-time = "2025-09-09T23:19:53.855Z" },
+]
+
+[[package]]
+name = "mistune"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/55/d01f0c4b45ade6536c51170b9043db8b2ec6ddf4a35c7ea3f5f559ac935b/mistune-3.2.0.tar.gz", hash = "sha256:708487c8a8cdd99c9d90eb3ed4c3ed961246ff78ac82f03418f5183ab70e398a", size = 95467, upload-time = "2025-12-23T11:36:34.994Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/f7/4a5e785ec9fbd65146a27b6b70b6cdc161a66f2024e4b04ac06a67f5578b/mistune-3.2.0-py3-none-any.whl", hash = "sha256:febdc629a3c78616b94393c6580551e0e34cc289987ec6c35ed3f4be42d0eee1", size = 53598, upload-time = "2025-12-23T11:36:33.211Z" },
 ]
 
 [[package]]

@@ -18,8 +18,9 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.devui import serve
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
 
@@ -79,11 +80,10 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    client = AzureOpenAIChatClient(
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    client = AzureOpenAIResponsesClient(
+        credential=AzureCliCredential(),
+        project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT"),
+        deployment_name=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     )
 
     # Create agents
@@ -128,7 +128,7 @@ def main():
     logger.info("  - Workflow: basic text transformer (uppercase + exclamation)")
 
     # Launch server with auto-generated entity IDs
-    serve(entities=entities, port=8090, auto_open=True)
+    serve(entities=entities, port=8090, auto_open=False)
 
 
 if __name__ == "__main__":
