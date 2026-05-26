@@ -36,6 +36,7 @@ Status is grouped into these buckets:
 | `agent-framework-github-copilot` | `python/packages/github_copilot` | `beta` |
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
+| `agent-framework-local-codeact` | `python/packages/local_codeact` | `alpha` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
 | `agent-framework-monty` | `python/packages/monty` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
