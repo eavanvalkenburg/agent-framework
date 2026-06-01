@@ -9,8 +9,14 @@ from pydantic import BaseModel
 
 from agent_framework import (
     SKIP_PARSING,
+    CompiledDynamicTool,
     Content,
+    DynamicToolError,
+    DynamicToolPolicy,
+    DynamicToolSpec,
     FunctionTool,
+    make_define_tool,
+    rehydrate_dynamic_tool,
     tool,
 )
 from agent_framework._middleware import FunctionInvocationContext
@@ -1460,6 +1466,196 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
+
+
+# endregion
+
+
+# region Dynamic (LLM-defined) tools
+
+
+class _FakeToolCodeCompiler:
+    """In-test compiler that runs a tiny, safe interpretation of a spec.
+
+    It never executes the model-authored ``body``; it just echoes the validated
+    arguments. This keeps core tests free of any sandbox dependency.
+    """
+
+    compiler_id = "fake"
+
+    def __init__(self) -> None:
+        self.compile_calls = 0
+
+    def compile(self, spec: "DynamicToolSpec", *, granted_capabilities: Any = ()) -> "CompiledDynamicTool":
+        self.compile_calls += 1
+
+        async def _run(**kwargs: Any) -> Any:
+            return {"tool": spec.name, "args": kwargs}
+
+        return CompiledDynamicTool(func=_run, compiler_id=self.compiler_id)
+
+
+def _dynamic_ctx(define_tool_tool: FunctionTool, tools_list: list[Any]) -> FunctionInvocationContext:
+    return FunctionInvocationContext(function=define_tool_tool, arguments={}, tools=tools_list)
+
+
+_SIMPLE_SCHEMA = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}
+
+
+async def _invoke_define(
+    define_tool_tool: FunctionTool,
+    ctx: FunctionInvocationContext,
+    *,
+    name: str = "echo",
+    description: str = "echo a",
+    parameters: dict[str, Any] | None = None,
+    body: str = "return a",
+) -> Any:
+    return await define_tool_tool.invoke(
+        arguments={
+            "name": name,
+            "description": description,
+            "parameters": parameters if parameters is not None else _SIMPLE_SCHEMA,
+            "body": body,
+        },
+        context=ctx,
+        skip_parsing=True,
+    )
+
+
+async def test_define_tool_default_deny() -> None:
+    """With the default (disabled) policy, define_tool refuses to define anything."""
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler())
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    with pytest.raises(DynamicToolError, match="disabled"):
+        await _invoke_define(define_tool_tool, ctx)
+    assert len(tools_list) == 1
+
+
+async def test_define_tool_happy_path_defines_and_invokes() -> None:
+    """An enabled policy lets define_tool add a tool that becomes invokable."""
+    compiler = _FakeToolCodeCompiler()
+    define_tool_tool = make_define_tool(compiler=compiler, policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    result = await _invoke_define(define_tool_tool, ctx)
+    assert "defined" in result
+    assert compiler.compile_calls == 1
+    assert len(tools_list) == 2
+
+    new_tool = tools_list[1]
+    assert new_tool.name == "echo"
+    assert getattr(new_tool, "__dynamic_tool__", False) is True
+    assert new_tool.approval_mode == "always_require"
+
+    invoked = await new_tool.invoke(arguments={"a": 5}, skip_parsing=True)
+    assert invoked == {"tool": "echo", "args": {"a": 5}}
+
+
+async def test_define_tool_rejects_reserved_name() -> None:
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    with pytest.raises(DynamicToolError, match="reserved"):
+        await _invoke_define(define_tool_tool, ctx, name="define_tool")
+
+
+async def test_define_tool_cannot_override_non_dynamic_tool() -> None:
+    @tool
+    def echo(a: Annotated[int, "n"]) -> int:
+        """Echo."""
+        return a
+
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool, echo]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    with pytest.raises(DynamicToolError, match="cannot be overridden"):
+        await _invoke_define(define_tool_tool, ctx, name="echo")
+
+
+async def test_define_tool_idempotent_on_identical_spec() -> None:
+    compiler = _FakeToolCodeCompiler()
+    define_tool_tool = make_define_tool(compiler=compiler, policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    await _invoke_define(define_tool_tool, ctx)
+    second = await _invoke_define(define_tool_tool, ctx)
+    assert "already defined" in second
+    assert compiler.compile_calls == 1
+    assert len(tools_list) == 2
+
+
+async def test_define_tool_rejects_conflicting_spec() -> None:
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    await _invoke_define(define_tool_tool, ctx)
+    with pytest.raises(DynamicToolError, match="different dynamic tool"):
+        await _invoke_define(define_tool_tool, ctx, body="return a + 1")
+
+
+async def test_define_tool_enforces_max_dynamic_tools() -> None:
+    define_tool_tool = make_define_tool(
+        compiler=_FakeToolCodeCompiler(),
+        policy=DynamicToolPolicy(enabled=True, max_dynamic_tools=1),
+    )
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    await _invoke_define(define_tool_tool, ctx, name="first")
+    with pytest.raises(DynamicToolError, match="Maximum number of dynamic tools"):
+        await _invoke_define(define_tool_tool, ctx, name="second")
+
+
+async def test_define_tool_rejects_unsupported_schema() -> None:
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    bad_schema = {"type": "object", "properties": {"a": {"type": "integer"}}, "oneOf": []}
+    with pytest.raises(DynamicToolError, match="Unsupported JSON Schema keyword"):
+        await _invoke_define(define_tool_tool, ctx, parameters=bad_schema)
+
+
+async def test_define_tool_rejects_keyword_parameter_name() -> None:
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    schema = {"type": "object", "properties": {"return": {"type": "integer"}}}
+    with pytest.raises(DynamicToolError, match="valid Python identifiers"):
+        await _invoke_define(define_tool_tool, ctx, parameters=schema)
+
+
+async def test_define_tool_rejects_invalid_tool_name() -> None:
+    define_tool_tool = make_define_tool(compiler=_FakeToolCodeCompiler(), policy=DynamicToolPolicy(enabled=True))
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = _dynamic_ctx(define_tool_tool, tools_list)
+
+    with pytest.raises(DynamicToolError, match="Invalid dynamic tool name"):
+        await _invoke_define(define_tool_tool, ctx, name="bad name!")
+
+
+async def test_rehydrate_dynamic_tool_recompiles_from_spec() -> None:
+    """rehydrate_dynamic_tool rebuilds an invokable tool from a persisted spec."""
+    compiler = _FakeToolCodeCompiler()
+    spec = DynamicToolSpec(name="echo", description="echo a", parameters=_SIMPLE_SCHEMA, body="return a")
+
+    tool_obj = rehydrate_dynamic_tool(spec, compiler, policy=DynamicToolPolicy(enabled=True))
+    assert tool_obj.name == "echo"
+    assert getattr(tool_obj, "__dynamic_tool__", False) is True
+    assert tool_obj.approval_mode == "always_require"
+    assert compiler.compile_calls == 1
+
+    invoked = await tool_obj.invoke(arguments={"a": 9}, skip_parsing=True)
+    assert invoked == {"tool": "echo", "args": {"a": 9}}
 
 
 # endregion

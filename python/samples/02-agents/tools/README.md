@@ -33,6 +33,7 @@ injection, and dynamic (progressive) tool exposure.
 | File | Demonstrates |
 |------|--------------|
 | [`dynamic_tool_exposure.py`](dynamic_tool_exposure.py) | A "loader" tool that adds more tools at runtime via `FunctionInvocationContext`. |
+| [`dynamic_tool_definition.py`](dynamic_tool_definition.py) | A self-extending agent: the model *defines a brand-new tool* (name, schema, body) at runtime, compiled and run inside the Monty sandbox, then exposed to itself. *Extra* pattern. |
 
 Frontloading a model with hundreds of tools hurts tool-selection accuracy,
 bloats context, and raises cost. Instead, start with a small set of loader
@@ -56,6 +57,18 @@ take effect on the **next iteration** of the function-calling loop.
 > ([`code_act.py`](../context_providers/code_act/code_act.py) for Hyperlight,
 > [`monty_code_act.py`](../context_providers/code_act/monty_code_act.py) for
 > Monty).
+
+> [!IMPORTANT]
+> `dynamic_tool_definition.py` goes one step further than progressive exposure:
+> it lets the **model author a brand-new tool body at runtime**. Executing
+> model-written code is inherently risky, so this feature is **default-deny**
+> (`DynamicToolPolicy(enabled=True)` is required), bodies run only inside a
+> sandbox (`MontySandboxToolCompiler`) — never in-process — and both *defining*
+> and *invoking* a dynamic tool require human approval by default. See
+> [`docs/decisions/0027-llm-defined-dynamic-tools.md`](../../../../docs/decisions/0027-llm-defined-dynamic-tools.md)
+> for the threat model. If you just need general code execution, prefer the
+> provider-driven CodeAct setup in
+> [`../context_providers/code_act/`](../context_providers/code_act/).
 
 ## Local shell & code interpreters
 

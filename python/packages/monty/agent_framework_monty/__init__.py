@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 
+from ._dynamic_tool_compiler import MontySandboxToolCompiler
 from ._execute_code_tool import MontyExecuteCodeTool
 from ._provider import MontyCodeActProvider
 from ._types import FileMount, FileMountInput, MountMode
@@ -18,6 +19,7 @@ __all__ = [
     "FileMountInput",
     "MontyCodeActProvider",
     "MontyExecuteCodeTool",
+    "MontySandboxToolCompiler",
     "MountMode",
     "__version__",
 ]

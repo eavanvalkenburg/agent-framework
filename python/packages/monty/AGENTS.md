@@ -15,6 +15,13 @@ Monty-backed CodeAct integrations for the Microsoft Agent Framework.
 - **`MontyExecuteCodeTool`** — `FunctionTool` that wraps the Monty interpreter.
   Use directly for mixed-tool agents or manual static wiring. Mirrors
   `HyperlightExecuteCodeTool`.
+- **`MontySandboxToolCompiler`** — a `ToolCodeCompiler` (core protocol) that
+  compiles an `agent_framework.DynamicToolSpec` body into a callable that runs
+  inside the Monty sandbox. It is the recommended secure substrate for the
+  core *LLM-defined dynamic tools* feature (`agent_framework.make_define_tool`).
+  Bodies get no host tools by default; pass `allowed_host_tools` (which must be
+  `approval_mode="never_require"`) to expose specific ones. See
+  `docs/decisions/0027-llm-defined-dynamic-tools.md`.
 
 ## Public API
 
@@ -24,6 +31,7 @@ from agent_framework_monty import (
     FileMountInput,
     MontyCodeActProvider,
     MontyExecuteCodeTool,
+    MontySandboxToolCompiler,
     MountMode,
 )
 ```
@@ -50,6 +58,11 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 ## Architecture
 
 - **`_types.py`** — `FileMount`, `FileMountInput`, `MountMode` (public).
+- **`_dynamic_tool_compiler.py`** — `MontySandboxToolCompiler`, the
+  `ToolCodeCompiler` for core's LLM-defined dynamic tools. Builds a Monty
+  script (binds validated args via `repr`, wraps the body in an async function
+  whose params are the schema property names) and runs it through
+  `InlineCodeBridge` with a restricted tool map + resource limits.
 - **`_provider.py`** — `MontyCodeActProvider` (thin wrapper around the tool).
 - **`_execute_code_tool.py`** — `MontyExecuteCodeTool` plus tool / mount
   normalization, approval helpers, dynamic `description`/`instructions`

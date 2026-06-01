@@ -51,6 +51,7 @@ class ExperimentalFeature(str, Enum):
     """
 
     EVALS = "EVALS"
+    DYNAMIC_TOOL_DEFINITION = "DYNAMIC_TOOL_DEFINITION"
     FILE_HISTORY = "FILE_HISTORY"
     FIDES = "FIDES"
     FOUNDRY_TOOLS = "FOUNDRY_TOOLS"

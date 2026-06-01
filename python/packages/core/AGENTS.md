@@ -12,6 +12,7 @@ agent_framework/
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
+├── _dynamic_tools.py    # LLM-defined dynamic tools (experimental, default-deny)
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
@@ -50,6 +51,28 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+
+### Dynamic tools (`_dynamic_tools.py`)
+
+Experimental, default-deny mechanism (feature id `DYNAMIC_TOOL_DEFINITION`) that
+lets a model define a brand-new tool at runtime and expose it via
+`FunctionInvocationContext.add_tools`. Core ships only the substrate-agnostic
+mechanism; it never executes model-authored code itself.
+
+- **`make_define_tool(*, compiler, policy, granted_capabilities)`** - builds the
+  `define_tool` meta-tool. Requires a `DynamicToolPolicy(enabled=True)`.
+- **`ToolCodeCompiler`** (Protocol) - pluggable sandbox substrate; implementations
+  live in CodeAct packages (e.g. `agent_framework_monty.MontySandboxToolCompiler`).
+- **`DynamicToolSpec`** - the model-authored spec (name, description, restricted
+  JSON-schema parameters, body).
+- **`CompiledDynamicTool`** - a compiler's output descriptor (callable + metadata).
+- **`DynamicToolPolicy`** - default-deny config (caps, reserved names, schema
+  subset limits, define/invoke approval defaults).
+- **`rehydrate_dynamic_tool(spec, compiler, ...)`** - recompile a dynamic tool
+  from its persisted spec after an approval pause/resume or checkpoint.
+- **`DynamicToolError`** - raised on policy violations or compile failures.
+
+See `docs/decisions/0027-llm-defined-dynamic-tools.md`.
 
 ### Middleware (`_middleware.py`)
 

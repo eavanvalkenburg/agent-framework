@@ -599,3 +599,92 @@ async def test_agent_runs_monty_codeact_end_to_end() -> None:
     response = await agent.run("Add 6 and 7 inside execute_code.")
     assert "13" in (response.text or "")
     assert client.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Dynamic (LLM-defined) tools via the Monty sandbox compiler
+# ---------------------------------------------------------------------------
+
+
+async def test_monty_sandbox_compiler_runs_body() -> None:
+    """A spec body runs in the sandbox and returns its value."""
+    from agent_framework import DynamicToolSpec
+
+    from agent_framework_monty import MontySandboxToolCompiler
+
+    spec = DynamicToolSpec(
+        name="add_one",
+        description="Add one to a number.",
+        parameters={"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]},
+        body="return n + 1",
+    )
+    compiled = MontySandboxToolCompiler().compile(spec)
+    assert compiled.compiler_id == "monty-sandbox"
+    assert await compiled.func(n=41) == 42
+
+
+async def test_monty_sandbox_compiler_blocks_filesystem() -> None:
+    """Filesystem access from a body is blocked and surfaces as DynamicToolError."""
+    from agent_framework import DynamicToolError, DynamicToolSpec
+
+    from agent_framework_monty import MontySandboxToolCompiler
+
+    spec = DynamicToolSpec(
+        name="read_secret",
+        description="",
+        parameters={"type": "object", "properties": {}},
+        body='return open("/etc/passwd").read()',
+    )
+    compiled = MontySandboxToolCompiler().compile(spec)
+    with pytest.raises(DynamicToolError, match="failed"):
+        await compiled.func()
+
+
+async def test_define_tool_end_to_end_with_monty() -> None:
+    """make_define_tool + Monty compiler defines a tool that then runs sandboxed."""
+    from agent_framework import (
+        DynamicToolPolicy,
+        FunctionInvocationContext,
+        make_define_tool,
+    )
+
+    from agent_framework_monty import MontySandboxToolCompiler
+
+    define_tool_tool = make_define_tool(
+        compiler=MontySandboxToolCompiler(),
+        policy=DynamicToolPolicy(enabled=True),
+    )
+    tools_list: list[Any] = [define_tool_tool]
+    ctx = FunctionInvocationContext(function=define_tool_tool, arguments={}, tools=tools_list)
+
+    await define_tool_tool.invoke(
+        arguments={
+            "name": "square",
+            "description": "Square a number.",
+            "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
+            "body": "return x * x",
+        },
+        context=ctx,
+        skip_parsing=True,
+    )
+
+    assert len(tools_list) == 2
+    new_tool = tools_list[1]
+    assert new_tool.name == "square"
+    assert getattr(new_tool, "__dynamic_tool__", False) is True
+    assert await new_tool.invoke(arguments={"x": 7}, skip_parsing=True) == 49
+
+
+def test_monty_sandbox_compiler_rejects_approval_required_host_tool() -> None:
+    """Approval-required host tools cannot be exposed to dynamic tool bodies."""
+    from agent_framework import DynamicToolError
+
+    from agent_framework_monty import MontySandboxToolCompiler
+
+    @tool(approval_mode="always_require")
+    def privileged(value: Annotated[int, "v"]) -> int:
+        """Privileged tool."""
+        return value
+
+    with pytest.raises(DynamicToolError, match="bypass the approval gate"):
+        MontySandboxToolCompiler(allowed_host_tools=[privileged])
