@@ -6,7 +6,7 @@ import inspect
 import os
 import sys
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -196,7 +196,7 @@ def test_raw_foundry_agent_chat_client_as_agent_preserves_client_type() -> None:
 
     named_agent = client.as_agent(name="display-name", instructions="You are helpful.")
     assert named_agent.name == "display-name"
-    assert named_agent.client.agent_name == "test-agent"
+    assert cast(Any, named_agent.client).agent_name == "test-agent"
 
 
 def test_raw_foundry_agent_chat_client_as_agent_uses_explicit_parameters() -> None:
@@ -646,7 +646,7 @@ def test_raw_foundry_agent_init_creates_client() -> None:
     )
 
     assert agent.client is not None
-    assert agent.client.agent_name == "test-agent"
+    assert cast(Any, agent.client).agent_name == "test-agent"
 
 
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -740,7 +740,7 @@ def test_foundry_agent_init_propagates_timeout_to_openai_client() -> None:
 
     openai_client_mock.with_options.assert_called_once_with(timeout=90.0)
     assert openai_client_mock.timeout == 5.0, "Original shared client must not be mutated"
-    assert agent.client.client is openai_client_mock.with_options.return_value
+    assert cast(Any, agent.client).client is openai_client_mock.with_options.return_value
 
 
 def test_foundry_agent_init_timeout_none_leaves_client_default() -> None:
@@ -768,7 +768,7 @@ def test_raw_foundry_agent_init_rejects_invalid_client_type() -> None:
         RawFoundryAgent(
             project_client=MagicMock(),
             agent_name="test-agent",
-            client_type=object,  # type: ignore[arg-type]
+            client_type=cast(Any, object),
         )
 
 
@@ -874,7 +874,7 @@ def test_foundry_agent_init() -> None:
     )
 
     assert agent.client is not None
-    assert agent.client.agent_name == "test-agent"
+    assert cast(Any, agent.client).agent_name == "test-agent"
 
 
 def test_foundry_agent_init_with_middleware() -> None:
@@ -884,7 +884,7 @@ def test_foundry_agent_init_with_middleware() -> None:
     mock_project.get_openai_client.return_value = MagicMock()
 
     class MyMiddleware(ChatMiddleware):
-        async def process(self, context: ChatContext) -> None:
+        async def process(self, context: ChatContext, call_next) -> None:
             pass
 
     agent = FoundryAgent(
@@ -980,7 +980,7 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
 @skip_if_foundry_agent_integration_tests_disabled
 async def test_foundry_agent_basic_run() -> None:
     """Smoke-test FoundryAgent against a real configured agent."""
-    async with FoundryAgent(credential=AzureCliCredential(), allow_preview=True) as agent:
+    async with FoundryAgent(credential=cast(Any, AzureCliCredential()), allow_preview=True) as agent:
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
     assert isinstance(response, AgentResponse)
@@ -994,7 +994,7 @@ async def test_foundry_agent_basic_run() -> None:
 async def test_foundry_agent_custom_client_run() -> None:
     """Smoke-test FoundryAgent against a real configured agent."""
     async with FoundryAgent(
-        credential=AzureCliCredential(), client_type=RawFoundryAgentChatClient, allow_preview=True
+        credential=cast(Any, AzureCliCredential()), client_type=RawFoundryAgentChatClient, allow_preview=True
     ) as agent:
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
 

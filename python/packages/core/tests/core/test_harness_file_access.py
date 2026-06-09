@@ -309,7 +309,7 @@ async def test_file_access_provider_registers_tools_and_instructions(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -340,7 +340,7 @@ async def test_file_access_provider_delete_approval_defaults_to_always_require(
     provider = FileAccessProvider(store=InMemoryAgentFileStore())
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -348,7 +348,7 @@ async def test_file_access_provider_delete_approval_defaults_to_always_require(
     tools = options["tools"]
     assert isinstance(tools, list)
     delete_file = _tool_by_name(tools, "file_access_delete_file")
-    assert delete_file.approval_mode == "always_require"
+    assert delete_file.approval_mode == "always_require"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     # The non-destructive tools should remain autonomous.
     for name in (
         "file_access_save_file",
@@ -356,7 +356,7 @@ async def test_file_access_provider_delete_approval_defaults_to_always_require(
         "file_access_list_files",
         "file_access_search_files",
     ):
-        assert _tool_by_name(tools, name).approval_mode == "never_require"
+        assert _tool_by_name(tools, name).approval_mode == "never_require"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_file_access_provider_delete_approval_opt_out(
@@ -367,13 +367,13 @@ async def test_file_access_provider_delete_approval_opt_out(
     provider = FileAccessProvider(store=InMemoryAgentFileStore(), require_delete_approval=False)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
 
     delete_file = _tool_by_name(options["tools"], "file_access_delete_file")  # type: ignore[arg-type]
-    assert delete_file.approval_mode == "never_require"
+    assert delete_file.approval_mode == "never_require"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_file_access_provider_tools_round_trip_files(
@@ -385,7 +385,7 @@ async def test_file_access_provider_tools_round_trip_files(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -398,55 +398,55 @@ async def test_file_access_provider_tools_round_trip_files(
     list_files = _tool_by_name(tools, "file_access_list_files")
     search_files = _tool_by_name(tools, "file_access_search_files")
 
-    saved = await save_file.invoke(arguments={"file_name": "plan.md", "content": "step 1\nERROR step 2"})
+    saved = await save_file.invoke(arguments={"file_name": "plan.md", "content": "step 1\nERROR step 2"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "plan.md" in saved[0].text and "saved" in saved[0].text
 
     # Default overwrite=False should refuse the second save.
-    refused = await save_file.invoke(arguments={"file_name": "plan.md", "content": "stomp"})
+    refused = await save_file.invoke(arguments={"file_name": "plan.md", "content": "stomp"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "already exists" in refused[0].text
 
     # overwrite=True should succeed.
-    overwritten = await save_file.invoke(
+    overwritten = await save_file.invoke(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         arguments={"file_name": "plan.md", "content": "stomp\nERROR replaced", "overwrite": True}
     )
     assert "saved" in overwritten[0].text
 
-    read_back = await read_file.invoke(arguments={"file_name": "plan.md"})
+    read_back = await read_file.invoke(arguments={"file_name": "plan.md"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert read_back[0].text == "stomp\nERROR replaced"
 
-    listed = await list_files.invoke()
+    listed = await list_files.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(listed[0].text) == ["plan.md"]
 
     # The list tool should accept an optional directory argument so agents can
     # enumerate nested folders (not only the root).
-    await save_file.invoke(arguments={"file_name": "reports/2024.md", "content": "annual"})
-    listed_nested = await list_files.invoke(arguments={"directory": "reports"})
+    await save_file.invoke(arguments={"file_name": "reports/2024.md", "content": "annual"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    listed_nested = await list_files.invoke(arguments={"directory": "reports"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(listed_nested[0].text) == ["2024.md"]
     # Blank / whitespace directory should fall back to the root listing.
-    listed_blank = await list_files.invoke(arguments={"directory": "   "})
+    listed_blank = await list_files.invoke(arguments={"directory": "   "})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert sorted(json.loads(listed_blank[0].text)) == ["plan.md"]
 
-    missing = await read_file.invoke(arguments={"file_name": "missing.md"})
+    missing = await read_file.invoke(arguments={"file_name": "missing.md"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "not found" in missing[0].text
 
-    search_payload = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "*.md"})
+    search_payload = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "*.md"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     parsed = json.loads(search_payload[0].text)
     assert parsed[0]["file_name"] == "plan.md"
     assert parsed[0]["matching_lines"][0]["line"] == "ERROR replaced"
 
     # The search tool should likewise accept an optional directory argument so
     # agents can scope a search to a subfolder.
-    await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})
-    scoped = await search_files.invoke(
+    await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    scoped = await search_files.invoke(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         arguments={"regex_pattern": "error", "file_pattern": "*.md", "directory": "reports"}
     )
     scoped_parsed = json.loads(scoped[0].text)
     assert [entry["file_name"] for entry in scoped_parsed] == ["issues.md"]
 
-    deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})
+    deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "deleted" in deleted[0].text
 
-    missing_delete = await delete_file.invoke(arguments={"file_name": "plan.md"})
+    missing_delete = await delete_file.invoke(arguments={"file_name": "plan.md"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "not found" in missing_delete[0].text
 
 
@@ -518,12 +518,12 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:
     """File-access harness public classes should expose HARNESS experimental metadata."""
-    assert AgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert InMemoryAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSystemAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSearchMatch.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileSearchResult.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert FileAccessProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
+    assert AgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert InMemoryAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert FileSystemAgentFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert FileSearchMatch.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert FileSearchResult.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert FileAccessProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert ".. warning:: Experimental" in (FileAccessProvider.__doc__ or "")
 
 
@@ -596,7 +596,7 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["work with files"])],
     )
@@ -610,18 +610,18 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
     search_files = _tool_by_name(tools, "file_access_search_files")
 
     # Path-traversal attempts on each tool should return a clean string, not raise.
-    saved = await save_file.invoke(arguments={"file_name": "../escape.txt", "content": "x"})
+    saved = await save_file.invoke(arguments={"file_name": "../escape.txt", "content": "x"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not save" in saved[0].text and "escape" in saved[0].text.lower()
-    read = await read_file.invoke(arguments={"file_name": "../escape.txt"})
+    read = await read_file.invoke(arguments={"file_name": "../escape.txt"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not read" in read[0].text
-    deleted = await delete_file.invoke(arguments={"file_name": "../escape.txt"})
+    deleted = await delete_file.invoke(arguments={"file_name": "../escape.txt"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not delete" in deleted[0].text
-    listed = await list_files.invoke(arguments={"directory": "../escape"})
+    listed = await list_files.invoke(arguments={"directory": "../escape"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not list" in listed[0].text
 
     # Regex length cap should also be returned to the model as text.
     too_long = "a" * 1024
-    searched = await search_files.invoke(arguments={"regex_pattern": too_long})
+    searched = await search_files.invoke(arguments={"regex_pattern": too_long})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not search files" in searched[0].text
 
 
@@ -636,12 +636,12 @@ async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
     provider = FileAccessProvider(store=store)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["read it"])],
     )
     read_file = _tool_by_name(options["tools"], "file_access_read_file")
-    response = await read_file.invoke(arguments={"file_name": "blob.bin"})
+    response = await read_file.invoke(arguments={"file_name": "blob.bin"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "Could not read" in response[0].text and "UTF-8" in response[0].text
 
 

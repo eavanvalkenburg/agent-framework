@@ -92,17 +92,17 @@ from ._shared import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -336,7 +336,7 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
 # region ResponsesClient
 
 
-class RawOpenAIChatClient(  # type: ignore[misc]
+class RawOpenAIChatClient(
     BaseChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
@@ -356,7 +356,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     """
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
-    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
+    STORES_BY_DEFAULT: ClassVar[bool] = True
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
     # Azure OpenAI Responses API may include this header in responses naming the actual model that
@@ -616,7 +616,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
+        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
@@ -735,9 +735,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
-                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)  # type: ignore
+                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
                 else:
-                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)  # type: ignore
+                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
                 response = raw_response.parse()
             except Exception as ex:
                 self._handle_request_error(ex)
@@ -898,7 +898,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 response_tools.append(
                     FunctionShellTool(
                         type="shell",
-                        environment=shell_env,  # type: ignore[typeddict-item]
+                        environment=shell_env,
                     )
                 )
                 continue
@@ -1080,7 +1080,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if output_format:
             tool["output_format"] = output_format
         if model:
-            tool["model"] = model  # type: ignore
+            tool["model"] = model
         if quality:
             tool["quality"] = quality
         if partial_images is not None:
@@ -1746,7 +1746,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
-                    "id": content.id,  # type: ignore[union-attr]
+                    "id": content.id,
                     "arguments": content.function_call.arguments,  # type: ignore[union-attr]
                     "name": content.function_call.name,  # type: ignore[union-attr]
                     "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
@@ -1882,7 +1882,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
             # cast is for pyright (reportUnknownVariableType); mypy considers
             # it redundant after the isinstance narrowing.
-            entries = cast(Sequence[Any], output)  # type: ignore[redundant-cast]
+            entries = cast(Sequence[Any], output)
             parts: list[str] = []
             for entry in entries:
                 if isinstance(entry, str):
@@ -2027,7 +2027,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             case "output_text":
                                 text_content = Content.from_text(
                                     text=message_content.text,
-                                    raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
+                                    raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
                                 if message_content.annotations:
@@ -2127,7 +2127,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=summary.text,
-                                    raw_representation=summary,  # type: ignore[arg-type]
+                                    raw_representation=summary,
                                 )
                             )
                             added_reasoning = True
@@ -2980,9 +2980,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
-            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens  # type: ignore[typeddict-unknown-key]
+            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
-            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens  # type: ignore[typeddict-unknown-key]
+            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
@@ -2994,7 +2994,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return {}
 
 
-class OpenAIChatClient(  # type: ignore[misc]
+class OpenAIChatClient(
     FunctionInvocationLayer[OpenAIChatOptionsT],
     ChatMiddlewareLayer[OpenAIChatOptionsT],
     ChatTelemetryLayer[OpenAIChatOptionsT],
@@ -3003,7 +3003,7 @@ class OpenAIChatClient(  # type: ignore[misc]
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
     @overload
     def __init__(

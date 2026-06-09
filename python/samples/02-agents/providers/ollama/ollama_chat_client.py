@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework import Message, tool
+from agent_framework import ChatOptions, Message, tool
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
@@ -40,12 +40,12 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_response(messages, tools=get_time, stream=True):
+        async for chunk in client.get_response(messages=messages, options=ChatOptions(tools=get_time), stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")
     else:
-        response = await client.get_response(messages, tools=get_time)
+        response = await client.get_response(messages=messages, options=ChatOptions(tools=get_time))
         print(f"Assistant: {response}")
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from agent_framework import Content, Message, SessionContext
@@ -508,7 +508,7 @@ class TestListDocumentsTool:
 class TestOutputFiltering:
     def test_default_markdown_and_fields(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(pdf_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(pdf_analysis_result))
 
         assert "markdown" in result
         assert "fields" in result
@@ -516,14 +516,14 @@ class TestOutputFiltering:
 
     def test_markdown_only(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider(output_sections=["markdown"])
-        result = provider._extract_sections(pdf_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(pdf_analysis_result))
 
         assert "markdown" in result
         assert "fields" not in result
 
     def test_fields_only(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider(output_sections=["fields"])
-        result = provider._extract_sections(invoice_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(invoice_analysis_result))
 
         assert "markdown" not in result
         assert "fields" in result
@@ -533,9 +533,9 @@ class TestOutputFiltering:
 
     def test_field_values_extracted(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(invoice_analysis_result))
 
-        fields = result.get("fields")
+        fields = cast("dict[str, Any]", result.get("fields"))
         assert isinstance(fields, dict)
         assert "VendorName" in fields
         assert fields["VendorName"]["value"] is not None
@@ -549,8 +549,8 @@ class TestOutputFiltering:
         a glance. Confidence is only present when the CU service provides it.
         """
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
-        fields = result.get("fields")
+        result = cast("dict[str, Any]", provider._extract_sections(invoice_analysis_result))
+        fields = cast("dict[str, Any]", result.get("fields"))
 
         expected_fields = {
             "VendorName": {
@@ -1029,19 +1029,19 @@ class TestErrorHandling:
 class TestMultiModalFixtures:
     def test_pdf_fixture_loads(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(pdf_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(pdf_analysis_result))
         assert "markdown" in result
         assert "Contoso" in str(result["markdown"])
 
     def test_audio_fixture_loads(self, audio_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(audio_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(audio_analysis_result))
         assert "markdown" in result
         assert "Call Center" in str(result["markdown"])
 
     def test_video_fixture_loads(self, video_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(video_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(video_analysis_result))
         assert "markdown" in result
         # All 3 segments should be concatenated at top level (for file_search)
         md = str(result["markdown"])
@@ -1073,12 +1073,12 @@ class TestMultiModalFixtures:
 
     def test_image_fixture_loads(self, image_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(image_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(image_analysis_result))
         assert "markdown" in result
 
     def test_invoice_fixture_loads(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
+        result = cast("dict[str, Any]", provider._extract_sections(invoice_analysis_result))
         assert "markdown" in result
         assert "fields" in result
         fields = result["fields"]
@@ -1625,7 +1625,7 @@ class TestCloseCancel:
         await provider.close()
 
         # Client should be closed (no tasks to cancel — tokens are just strings)
-        provider._client.close.assert_called_once()
+        cast(Any, provider._client.close).assert_called_once()
 
 
 class TestSessionIsolation:
@@ -1895,7 +1895,7 @@ class TestWarningsExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
+        extracted = cast("dict[str, Any]", provider._extract_sections(result_obj))
         assert "warnings" in extracted
         warnings = extracted["warnings"]
         assert isinstance(warnings, list)
@@ -1912,7 +1912,7 @@ class TestWarningsExtraction:
     def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
         """Empty/None warnings should not appear in extracted result."""
         provider = _make_provider()
-        extracted = provider._extract_sections(pdf_analysis_result)
+        extracted = cast("dict[str, Any]", provider._extract_sections(pdf_analysis_result))
         assert "warnings" not in extracted
 
 
@@ -1933,7 +1933,7 @@ class TestCategoryExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
+        extracted = cast("dict[str, Any]", provider._extract_sections(result_obj))
         assert extracted.get("category") == "Legal Contract"
 
     def test_category_in_multi_segment_video(self) -> None:
@@ -1972,7 +1972,7 @@ class TestCategoryExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
+        extracted = cast("dict[str, Any]", provider._extract_sections(result_obj))
 
         # Top-level metadata
         assert extracted["kind"] == "audioVisual"
@@ -2003,7 +2003,7 @@ class TestCategoryExtraction:
     def test_category_omitted_when_none(self, pdf_analysis_result: AnalysisResult) -> None:
         """No category should be in output when analyzer doesn't classify."""
         provider = _make_provider()
-        extracted = provider._extract_sections(pdf_analysis_result)
+        extracted = cast("dict[str, Any]", provider._extract_sections(pdf_analysis_result))
         assert "category" not in extracted
 
 
