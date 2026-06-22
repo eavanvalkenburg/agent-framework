@@ -56,7 +56,6 @@ These are follow-up design topics, not hidden requirements of the v1 host.
 | `agent-framework-hosting-telegram` | `agent_framework_hosting_telegram` | `TelegramChannel` and Telegram command helpers. |
 | `agent-framework-hosting-activity-protocol` | `agent_framework_hosting_activity_protocol` | `ActivityProtocolChannel` for Activity Protocol over Azure Bot Service. |
 | `agent-framework-hosting-discord` | `agent_framework_hosting_discord` | `DiscordChannel` and Discord command/interaction helpers. |
-| `agent-framework-foundry-hosting` | `agent_framework.foundry_hosting` | Foundry isolation middleware and Foundry-backed hosting helpers usable with the v1 host. |
 
 Channel packages may depend on their native SDKs. The core hosting package should not depend on channel SDKs or on top-level legacy protocol hosts.
 
@@ -180,13 +179,11 @@ Workflow checkpointing is explicit. Apps either configure checkpoint storage on 
 
 `state_dir` may provide a conventional location for workflow checkpoint files, but checkpointing is still opt-in and separate from agent session history. Checkpoints are workflow-runtime state, not channel state and not identity-link state.
 
-## Foundry Isolation Middleware
+## Foundry Hosted Agents boundary
 
-V1 keeps Foundry isolation as middleware rather than as a channel-linking feature.
+The generic `agent-framework-hosting` stack is not the Foundry Hosted Agents hosting surface. Apps targeting Foundry Hosted Agents should use `agent-framework-foundry-hosting`, which owns Foundry-specific protocol, storage, isolation, and identity behavior.
 
-The middleware is installed only when the Foundry hosting environment flag is present. In that environment it reads Foundry-provided isolation values at the trusted hosting boundary, exposes them as read-only request context for Foundry-aware history or memory providers, and rejects unsafe session resumes when the live isolation context does not match persisted session context. Outside Foundry, raw isolation headers are ignored unless an app supplies its own trusted middleware.
-
-This middleware does not create cross-channel identity links and does not authorize non-Foundry channels.
+The v1 host/channel contract remains for local or self-managed ASGI hosting and for custom channel composition outside the Foundry Hosted Agents runtime.
 
 ## Current Channels
 
@@ -194,7 +191,7 @@ This middleware does not create cross-channel identity links and does not author
 
 `ResponsesChannel` exposes the OpenAI-compatible Responses API shape. It maps request body fields such as input, options, and conversation identifiers into `ChannelRequest`, and it renders Responses-compatible one-shot or streaming responses.
 
-Responses session continuity uses a channel-selected `isolation_key`, commonly derived from a response/conversation id, caller-provided session id, Foundry isolation context, or deployment-specific request metadata.
+Responses session continuity uses a channel-selected `isolation_key`, commonly derived from a response/conversation id, caller-provided session id, or deployment-specific request metadata.
 
 ### Invocations
 
@@ -315,6 +312,5 @@ The Python implementation should be considered complete when:
 - each current channel has contract tests for route contribution, lifecycle, request parsing, hooks, and originating response rendering,
 - session tests prove shared `isolation_key` values share an `AgentSession` and `reset_session` rotates it,
 - workflow tests or samples use explicit `checkpoint_location`,
-- Foundry isolation middleware is covered by integration or contract tests,
 - no v1 package exposes the removed linking, multicast, durable-runner, or continuation APIs, and
 - this spec and ADR-0027 remain aligned.

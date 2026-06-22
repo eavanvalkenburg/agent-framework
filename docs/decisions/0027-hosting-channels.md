@@ -68,7 +68,6 @@ The host owns:
 - invocation of the target,
 - `ChannelSession(isolation_key=...)` to `AgentSession` resolution and caching,
 - `reset_session(isolation_key=...)`,
-- host-level middleware, including Foundry isolation middleware only when the Foundry hosting environment flag is present,
 - invocation of per-channel hooks (`ChannelRunHook`, `ChannelResponseHook`, `ChannelStreamUpdateHook`), and
 - workflow checkpoint wiring through an explicit `checkpoint_location`.
 
@@ -77,6 +76,10 @@ The host owns:
 ### Trust boundary for `isolation_key`
 
 The host treats `ChannelSession.isolation_key` as a session partition key, not as proof of identity. Channels or host middleware must authenticate and authorize any externally supplied value before passing it to the host. For example, a Responses caller must not be allowed to choose an arbitrary `previous_response_id` or header-derived key unless the platform or middleware has already established that the caller owns that conversation. The host deliberately does not infer that trust from the string itself.
+
+### Foundry Hosted Agents boundary
+
+This generic host/channel stack is not the Foundry Hosted Agents hosting surface. Foundry Hosted Agents should use the `agent-framework-foundry-hosting` package, which owns Foundry-specific protocol, storage, isolation, and identity behavior. The v1 `agent-framework-hosting` package remains for local or self-managed ASGI hosting and for custom channel composition outside the Foundry Hosted Agents runtime.
 
 ### Hook ownership
 
@@ -135,7 +138,6 @@ Before this ADR is accepted:
 - Session tests prove that identical `ChannelSession.isolation_key` values resolve to the same cached `AgentSession`, and `reset_session` rotates that mapping.
 - Channel tests prove that each channel renders only its own originating response; there is no host-level push, multicast, or active-channel delivery path.
 - Workflow tests or samples use an explicit `checkpoint_location`.
-- Foundry isolation middleware is documented and covered by integration or contract tests, including the non-Foundry case where raw isolation headers are ignored.
 - The v1 API and packages do not expose the removed symbols or packages listed in [Non-goals for v1](#non-goals-for-v1).
 - The Python spec is updated to match this simplified contract and uses "public", "stable", or "released" terminology for Agent Framework APIs.
 
