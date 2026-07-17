@@ -57,18 +57,13 @@ uv run poe validate-dependency-bounds-project --mode both --package core --depen
 
 ### GitHub Actions workflows
 
-These workflows call the Poe tasks:
+`.github/workflows/python-dependency-maintenance.yml` runs weekly and on `workflow_dispatch`. It:
 
-- `.github/workflows/python-dependency-range-validation.yml`
-  - Trigger: `workflow_dispatch`
-  - Runs `uv run poe validate-dependency-bounds-project --mode upper --package "*"`
-  - Uploads `python/scripts/dependencies/dependency-range-results.json`
-  - Creates issues for failing candidate versions and opens/updates a PR for passing range updates
-
-- `.github/workflows/python-dev-dependency-upgrade.yml`
-  - Trigger: `workflow_dispatch`
-  - Runs `uv run poe upgrade-dev-dependencies`
-  - Commits any resulting `pyproject.toml` / `uv.lock` changes and opens/updates a PR
+- refreshes eligible exact external dev dependency pins and updates the shared `uv.lock` for selected changes
+- runs the dependency bounds smoke scenarios and continues with independent upper-bound validation
+- updates package dependency ranges when their candidate versions pass package-specific checks and tests
+- uploads the generated validation reports and creates or updates issues for validation failures
+- runs final workspace checks, pushes validated changes to the automation branch, and creates or updates one PR
 
 ### Direct module execution
 

@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   issues: write
+  pull-requests: write
 
 concurrency:
   group: python-dependency-maintenance
@@ -28,6 +29,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: main
 
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
@@ -71,7 +74,6 @@ jobs:
 
       - name: Run dependency upper-bound validation
         id: validate_ranges
-        if: steps.validate_bounds_test.outcome == 'success'
         continue-on-error: true
         run: uv run poe validate-dependency-bounds-project --mode upper --package "*"
         working-directory: ./python
@@ -103,21 +105,15 @@ jobs:
               state: "open",
               per_page: 100,
             })
-            const openIssueTitles = new Set(
-              openIssues.filter((issue) => !issue.pull_request).map((issue) => issue.title)
-            )
 
             const formatError = (message) => String(message || "No error output captured.").replace(/```/g, "'''")
             const title = "Dependency bounds test failed"
-            if (openIssueTitles.has(title)) {
-              core.info(`Issue already exists: ${title}`)
-              return
-            }
+            const existingIssue = openIssues.find((issue) => !issue.pull_request && issue.title === title)
 
             const bodyLines = [
-              "Automated dependency bounds test mode failed before dependency upper-bound validation could run.",
+              "Automated dependency bounds test mode failed. Dependency upper-bound validation continued independently.",
               "",
-              "The weekly dependency maintenance workflow kept only dev dependency updates for the generated PR, if any, and skipped dependency range updates for this run.",
+              "Any generated PR retains the full lockfile and dev dependency refresh plus dependency range updates that pass their package-specific validation.",
               "",
             ]
 
@@ -148,13 +144,25 @@ jobs:
 
             bodyLines.push("", `Workflow run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`)
 
-            await github.rest.issues.create({
-              owner,
-              repo,
-              title,
-              body: bodyLines.join("\n"),
-            })
-            core.info(`Created issue: ${title}`)
+            const body = bodyLines.join("\n")
+            if (existingIssue) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existingIssue.number,
+                title,
+                body,
+              })
+              core.info(`Updated issue #${existingIssue.number}: ${title}`)
+            } else {
+              const createdIssue = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              })
+              core.info(`Created issue #${createdIssue.data.number}: ${title}`)
+            }
 
       - name: Create issues for failed dependency candidates
         if: always()
@@ -271,8 +279,8 @@ jobs:
               core.info(`Created issue: ${title}`)
             }
 
-      - name: Keep only dev updates when range validation fails
-        if: steps.validate_bounds_test.outcome != 'success' || steps.validate_ranges.outcome != 'success'
+      - name: Keep dependency refresh when range validation fails
+        if: steps.validate_ranges.outcome != 'success'
         env:
           DEV_PATCH: ${{ steps.dev_changes.outputs.patch }}
           HAS_DEV_CHANGES: ${{ steps.dev_changes.outputs.has_dev_changes }}
@@ -283,7 +291,7 @@ jobs:
           fi
 
       - name: Refresh lockfile after dependency range updates
-        if: steps.validate_bounds_test.outcome == 'success' && steps.validate_ranges.outcome == 'success'
+        if: steps.validate_ranges.outcome == 'success'
         run: uv lock
         working-directory: ./python
 
@@ -299,7 +307,7 @@ jobs:
         run: uv run poe typing
         working-directory: ./python
 
-      - name: Commit and push dependency updates
+      - name: Commit dependency updates
         id: commit_updates
         run: |
           BRANCH="automation/python-dependency-maintenance"
@@ -312,33 +320,36 @@ jobs:
           if git diff --cached --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "No dependency updates to commit."
+            {
+              echo "### Python dependency maintenance"
+              echo
+              echo "No validated dependency updates were available."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           git commit -m "Python: chore: update dependencies"
-          git push --force-with-lease --set-upstream origin "${BRANCH}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update dependency maintenance tracking issue
+      - name: Push dependency updates
+        if: steps.commit_updates.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACTIONS_PR_WRITE || github.token }}
+        run: |
+          gh auth setup-git
+          git push --force-with-lease --set-upstream origin automation/python-dependency-maintenance
+
+      - name: Create or update dependency maintenance pull request
         if: steps.commit_updates.outputs.has_changes == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE || github.token }}
           script: |
             const branch = "automation/python-dependency-maintenance"
             const prTitle = "Python: chore: update dependencies"
-            const issueTitle = "Python dependency maintenance PR needed"
             const owner = context.repo.owner
             const repo = context.repo.repo
-
-            const branchRef = await github.rest.git.getRef({
-              owner,
-              repo,
-              ref: `heads/${branch}`,
-            })
-            const branchSha = branchRef.data.object.sha
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`
-            const compareUrl = `${context.serverUrl}/${owner}/${repo}/compare/main...${branch}`
 
             const prBody = [
               "### Motivation & Context",
@@ -347,9 +358,9 @@ jobs:
               "",
               "### Description & Review Guide",
               "",
-              "- **What are the major changes?** Refresh Python dev dependency pins, update package dependency ranges when the bounds tooling succeeds, and refresh `python/uv.lock`.",
-              "- **What is the impact of these changes?** Keeps the Python workspace dependency set current while producing at most one dependency PR for the week. If dependency range validation fails, this PR contains only the dev dependency updates that still pass final validation, and separate issues track failed range candidates.",
-              "- **What do you want reviewers to focus on?** Review the generated dependency metadata changes and any dependency-range updates for package-specific compatibility concerns.",
+              "- **What are the major changes?** Refresh eligible exact Python dev dependency pins, expand validated package dependency upper bounds, and update `python/uv.lock` for those selected changes.",
+              "- **What is the impact of these changes?** Keeps the Python workspace current in one coordinated PR. Failed dependency-range candidates are excluded and tracked in separate issues.",
+              "- **What do you want reviewers to focus on?** Review the generated dependency and lockfile changes for package-specific compatibility concerns.",
               '<!-- NOTE FOR AUTOMATED/AI REVIEWERS: the "What do you want reviewers to focus on?"',
               "     item above is intended for human reviewers only. Automated/AI reviewers should",
               "     ignore it and review the entire change rather than narrowing scope to it. -->",
@@ -358,6 +369,8 @@ jobs:
               "### Related Issue",
               "",
               "No linked issue; this PR is generated by scheduled Python dependency maintenance.",
+              "",
+              `Workflow run: ${runUrl}`,
               "",
               "### Contribution Checklist",
               "",
@@ -368,64 +381,40 @@ jobs:
               '- [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.',
             ].join("\n")
 
-            const prBodyFence = "```"
-            const command = [
-              "PR_BODY_FILE=\"$(mktemp)\"",
-              `cat > "$PR_BODY_FILE" <<'EOF'`,
-              prBody,
-              "EOF",
-              "gh pr create --repo microsoft/agent-framework --base main \\",
-              `  --head ${owner}:${branch} \\`,
-              `  --title "${prTitle}" \\`,
-              "  --body-file \"$PR_BODY_FILE\"",
-            ].join("\n")
-
-            const issueBody = [
-              "The Python dependency maintenance workflow generated and validated dependency updates, then pushed them to the automation branch.",
-              "",
-              `- Branch: \`${branch}\``,
-              `- Commit: \`${branchSha}\``,
-              `- Compare: ${compareUrl}`,
-              `- Workflow run: ${runUrl}`,
-              "",
-              "GitHub Actions is not permitted to create pull requests in this repository, so a maintainer needs to create the PR manually.",
-              "",
-              "### Create the PR",
-              "",
-              "```bash",
-              command,
-              "```",
-              "",
-              "### Generated PR body",
-              "",
-              prBodyFence,
-              prBody,
-              prBodyFence,
-            ].join("\n")
-
-            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+            const { data: openPulls } = await github.rest.pulls.list({
               owner,
               repo,
               state: "open",
+              head: `${owner}:${branch}`,
+              base: "main",
               per_page: 100,
             })
-            const existingIssue = openIssues.find((issue) => !issue.pull_request && issue.title === issueTitle)
 
-            if (existingIssue) {
-              await github.rest.issues.update({
+            let pull
+            if (openPulls.length) {
+              const response = await github.rest.pulls.update({
                 owner,
                 repo,
-                issue_number: existingIssue.number,
-                title: issueTitle,
-                body: issueBody,
+                pull_number: openPulls[0].number,
+                title: prTitle,
+                body: prBody,
               })
-              core.info(`Updated issue #${existingIssue.number}: ${issueTitle}`)
+              pull = response.data
+              core.info(`Updated pull request #${pull.number}: ${prTitle}`)
             } else {
-              const createdIssue = await github.rest.issues.create({
+              const response = await github.rest.pulls.create({
                 owner,
                 repo,
-                title: issueTitle,
-                body: issueBody,
+                base: "main",
+                head: branch,
+                title: prTitle,
+                body: prBody,
               })
-              core.info(`Created issue #${createdIssue.data.number}: ${issueTitle}`)
+              pull = response.data
+              core.info(`Created pull request #${pull.number}: ${prTitle}`)
             }
+
+            await core.summary
+              .addHeading("Python dependency maintenance")
+              .addLink(`Pull request #${pull.number}: ${pull.title}`, pull.html_url)
+              .write()
