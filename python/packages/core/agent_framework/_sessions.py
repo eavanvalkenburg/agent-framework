@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentRunInputs,
@@ -1096,6 +1097,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
     ) -> list[Message]:
         """Retrieve messages from session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return []
         messages = list(state.get("messages", []))
@@ -1112,6 +1114,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Persist messages to session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return
         existing = state.get("messages", [])
@@ -1231,6 +1234,7 @@ class FileHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> list[Message]:
         """Retrieve messages from the session's JSON Lines file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         file_path = self._session_file_path(session_id)
         async_lock = self._session_async_write_lock(file_path)
@@ -1282,6 +1286,7 @@ class FileHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Append messages to the session's JSON Lines file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         if not messages:
             return
