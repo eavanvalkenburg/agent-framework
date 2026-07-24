@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 contact: eavanvalkenburg
 date: 2026-07-22
 deciders: eavanvalkenburg
