@@ -37,8 +37,8 @@ skill source types, and separate Foundry chat/agent/memory/evals/toolbox bits
 (plus embedding in Python).
 See the
 [registry](feature-usage-bit-registry.md). ADR-0033 still leaves final v1
-granularity open. The refreshed candidate assigns 62 Python bits and 51 .NET
-bits. V1 uses 128 bits, leaving 66 Python and 77 .NET positions for additive
+granularity open. The refreshed candidate assigns 63 Python indexes and 52 .NET
+indexes. V1 uses 128 bits, leaving 65 Python and 76 .NET positions for additive
 growth.
 
 Success metric: within one release after rollout, ≥80% of **eligible,

@@ -207,8 +207,8 @@ Examples that do **not** get separate bits: `InMemoryHistoryProvider` vs
 `OpenAIChatCompletionClient`; skill-source decorators such as caching, filtering,
 deduplication, and aggregation.
 
-Rough estimate: Python ~60-70 bits; .NET ~45-55 bits. The current candidate
-registry is at 62 Python / 51 .NET assigned bits.
+Rough estimate: Python ~60-70 indexes; .NET ~45-55 indexes. The current candidate
+registry is at 63 Python / 52 .NET assigned indexes.
 
 - Good, likely answers the first product adoption questions while staying compact.
 - Good, fits comfortably within 128 bits while leaving room for additive package
@@ -398,8 +398,8 @@ F0-F4. This is a point-in-time decision: adding new bits later is easier than
 removing or redefining them, because removals/redefinitions require a new
 registry version and historical decode tables. For v1, prefer the least detailed
 level that answers the known product/support questions so we do not force a v2
-shortly after launch. The refreshed candidate registry uses **62 Python bits and
-51 .NET bits**, leaving 66 and 77 positions respectively. That headroom supports
+shortly after launch. The refreshed candidate registry uses **63 Python indexes and
+52 .NET indexes**, leaving 65 and 76 positions respectively. That headroom supports
 normal growth; it does not waive the registry's
 [allocation tenet](../specs/feature-usage-bit-registry.md#allocation-tenet).
 

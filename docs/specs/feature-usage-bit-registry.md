@@ -153,20 +153,21 @@ provider/integration packages from 48.
 | 72 | `ag_ui` | AG-UI chat client / agent | `agent_framework_ag_ui` |
 | 73 | `chatkit` | ChatKit integration | `agent_framework_chatkit` |
 | 74 | `devui` | DevUI served | `agent_framework_devui.serve` |
-| 75 | `declarative` | Declarative agent / workflow | `agent_framework_declarative` |
-| 76 | `durabletask` | Durable task runtime | `agent_framework_durabletask` |
-| 77 | `azurefunctions` | Azure Functions agent host | `agent_framework_azurefunctions` |
-| 78 | `tools` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
-| 79 | `monty` | Monty CodeAct provider | `agent_framework_monty.MontyCodeActProvider` |
-| 80 | `hyperlight` | Hyperlight CodeAct provider | `agent_framework_hyperlight.HyperlightCodeActProvider` |
-| 81 | `azure_cosmos_memory` | Azure Cosmos DB semantic-memory provider | `agent_framework_azure_cosmos_memory.CosmosMemoryContextProvider` |
-| 82 | `hosting` | App-owned agent/workflow hosting state | `agent_framework_hosting.AgentState` / `WorkflowState` |
-| 83 | `hosting.a2a` | A2A hosting converters | `agent_framework_hosting_a2a.a2a_to_run` / `a2a_from_run` |
-| 84 | `hosting.mcp` | MCP hosting adapters | `agent_framework_hosting_mcp.AgentMCPTool` / `WorkflowMCPTool` |
-| 85 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
-| 86 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
-| 87 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
-| 88–127 | _reserved_ | future packages | — |
+| 75 | `declarative.agent` | Declarative agent definitions | `agent_framework_declarative.AgentFactory` |
+| 76 | `declarative.workflow` | Declarative workflow definitions | `agent_framework_declarative.WorkflowFactory` |
+| 77 | `durabletask` | Durable task runtime | `agent_framework_durabletask` |
+| 78 | `azurefunctions` | Azure Functions agent host | `agent_framework_azurefunctions` |
+| 79 | `tools` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
+| 80 | `monty` | Monty CodeAct provider | `agent_framework_monty.MontyCodeActProvider` |
+| 81 | `hyperlight` | Hyperlight CodeAct provider | `agent_framework_hyperlight.HyperlightCodeActProvider` |
+| 82 | `azure_cosmos_memory` | Azure Cosmos DB semantic-memory provider | `agent_framework_azure_cosmos_memory.CosmosMemoryContextProvider` |
+| 83 | `hosting` | App-owned agent/workflow hosting state | `agent_framework_hosting.AgentState` / `WorkflowState` |
+| 84 | `hosting.a2a` | A2A hosting converters | `agent_framework_hosting_a2a.a2a_to_run` / `a2a_from_run` |
+| 85 | `hosting.mcp` | MCP hosting adapters | `agent_framework_hosting_mcp.AgentMCPTool` / `WorkflowMCPTool` |
+| 86 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
+| 87 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
+| 88 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
+| 89–127 | _reserved_ | future packages | — |
 
 ## Index table — .NET (`agent-framework-dotnet`, version 1)
 
@@ -216,16 +217,17 @@ provider/integration packages from 48.
 | 62 | `a2a` | A2A agent | `Microsoft.Agents.AI.A2A.A2AAgent` |
 | 63 | `hosting.ag_ui` | AG-UI hosting endpoint | `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.AGUIEndpointRouteBuilderExtensions.MapAGUIServer` |
 | 64 | `devui` | DevUI served | `Microsoft.Agents.AI.DevUI` |
-| 65 | `declarative` | Declarative agent factory | `Microsoft.Agents.AI.ChatClientPromptAgentFactory` |
-| 66 | `durabletask` | Durable task runtime | `Microsoft.Agents.AI.DurableTask` |
-| 67 | `azurefunctions` | Azure Functions agent host | `Microsoft.Agents.AI.Hosting.AzureFunctions` |
-| 68 | `tools` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
-| 69 | `hyperlight` | Hyperlight CodeAct provider | `Microsoft.Agents.AI.Hyperlight.HyperlightCodeActProvider` |
-| 70 | `hosting` | Generic AF hosting | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
-| 71 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
-| 72 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
-| 73 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
-| 74–127 | _reserved_ | future packages | — |
+| 65 | `declarative.agent` | Declarative agent definitions | `Microsoft.Agents.AI.PromptAgentFactory.CreateAsync` |
+| 66 | `declarative.workflow` | Declarative workflow definitions | `Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder.Build` |
+| 67 | `durabletask` | Durable task runtime | `Microsoft.Agents.AI.DurableTask` |
+| 68 | `azurefunctions` | Azure Functions agent host | `Microsoft.Agents.AI.Hosting.AzureFunctions` |
+| 69 | `tools` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
+| 70 | `hyperlight` | Hyperlight CodeAct provider | `Microsoft.Agents.AI.Hyperlight.HyperlightCodeActProvider` |
+| 71 | `hosting` | Generic AF hosting | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
+| 72 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
+| 73 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
+| 74 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
+| 75–127 | _reserved_ | future packages | — |
 
 ## Opt-out
 
