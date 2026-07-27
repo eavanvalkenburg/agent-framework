@@ -1321,7 +1321,6 @@ async def _resolve_approval_responses(
         try:
             results, _ = await _try_execute_function_calls(
                 custom_args=tool_kwargs,
-                attempt_idx=0,
                 function_calls=approved_responses,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,

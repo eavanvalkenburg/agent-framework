@@ -477,6 +477,26 @@ class ContextProvider:
         """
 
 
+def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:
+    """Remove approval request/response wrappers from history before model replay."""
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents = [
+            content
+            for content in message.contents
+            if content.type not in {"function_approval_request", "function_approval_response"}
+        ]
+        if not filtered_contents:
+            continue
+        if len(filtered_contents) == len(message.contents):
+            filtered_messages.append(message)
+            continue
+        filtered_message = copy.copy(message)
+        filtered_message.contents = filtered_contents
+        filtered_messages.append(filtered_message)
+    return filtered_messages
+
+
 class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
@@ -579,7 +599,7 @@ class HistoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
-        history = await self.get_messages(context.session_id, state=state)
+        history = _filter_approval_control_messages(await self.get_messages(context.session_id, state=state))
         context.extend_messages(self, history)
 
     async def after_run(
