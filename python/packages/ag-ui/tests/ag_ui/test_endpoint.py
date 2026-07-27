@@ -5338,9 +5338,7 @@ async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming
     This drives the full pause -> approve -> resume flow with a real provider-injected tool and
     asserts the approved side effect actually happens without any rejection/failure result.
 
-    Note: the deferred tool executes inside ``agent.run`` and its ``function_result`` is consumed
-    there, so (unlike a statically executed approval) no ``TOOL_CALL_RESULT`` event is streamed
-    for it. Surfacing that result to the client is tracked separately in #7241.
+    The deferred tool result must still be returned to AG-UI exactly once.
     """
     side_effects: list[str] = []
     state = {"phase": "pause"}
@@ -5425,6 +5423,8 @@ async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming
 
     # The approved provider tool actually executed -- its side effect fired.
     assert side_effects == ["wrote"]
+    tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in tool_results] == [("call_provider", "wrote to disk")]
     # And it was neither rejected nor reported as a transport failure (the #7043 bug).
     assert "Tool call invocation was rejected" not in resume_text
     assert "Tool call invocation failed" not in resume_text
