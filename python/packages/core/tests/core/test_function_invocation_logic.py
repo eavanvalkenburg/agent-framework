@@ -2428,6 +2428,33 @@ def test_is_hosted_tool_approval_without_server_label():
     assert _is_hosted_tool_approval("not a content") is False
 
 
+def test_collect_approval_responses_consumes_matching_follow_up_request_occurrence() -> None:
+    """A follow-up user-input request resolves only the preceding approval occurrence for a reused call id."""
+    from agent_framework._tools import _collect_approval_responses
+
+    _, _, first_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_1",
+        tool_name="guarded_tool",
+    )
+    _, _, second_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_2",
+        tool_name="guarded_tool",
+    )
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_reused"
+    messages = [
+        Message(role="user", contents=[first_response]),
+        Message(role="assistant", contents=[follow_up_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    pending_responses = _collect_approval_responses(messages)
+
+    assert pending_responses == {"approval_2": second_response}
+
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
@@ -4365,6 +4392,66 @@ class TerminateLoopMiddleware(FunctionMiddleware):
         raise MiddlewareTermination
 
 
+@pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
+async def test_streaming_approval_resume_yields_terminal_result_before_model_text(
+    chat_client_base: SupportsChatGetResponse,
+    approved: bool,
+) -> None:
+    """The streaming invocation layer emits one terminal result before continuing to model text."""
+    calls = 0
+
+    @tool(name="guarded_stream_tool", approval_mode="always_require")
+    def guarded_stream_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved output"
+
+    function_call = Content.from_function_call(
+        call_id="call_stream_approval",
+        name="guarded_stream_tool",
+        arguments="{}",
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(role="assistant", contents=[function_call])],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+    ]
+    first_stream = chat_client_base.get_response(
+        [Message(role="user", contents=["run guarded"])],
+        stream=True,
+        options={"tools": [guarded_stream_tool]},
+    )
+    first_updates = [update async for update in first_stream]
+    approval_request = next(
+        content
+        for update in first_updates
+        for content in update.contents
+        if content.type == "function_approval_request"
+    )
+
+    resumed_stream = chat_client_base.get_response(
+        [Message(role="user", contents=[approval_request.to_function_approval_response(approved=approved)])],
+        stream=True,
+        options={"tools": [guarded_stream_tool]},
+    )
+    resumed_updates = [update async for update in resumed_stream]
+    resumed_response = await resumed_stream.get_final_response()
+
+    assert [[content.type for content in update.contents] for update in resumed_updates] == [
+        ["function_result"],
+        ["text"],
+    ]
+    terminal_result = resumed_updates[0].contents[0]
+    assert terminal_result.call_id == "call_stream_approval"
+    assert terminal_result.result == (
+        "approved output" if approved else "Error: Tool call invocation was rejected by user."
+    )
+    assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
+        ["function_result"],
+        ["text"],
+    ]
+    assert calls == int(approved)
+
+
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_approval_resume_honors_middleware_termination(
     chat_client_base: SupportsChatGetResponse,
@@ -4446,6 +4533,97 @@ async def test_approval_resume_honors_middleware_termination(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_user_input_counts_toward_function_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """An approved execution that pauses for user input still consumes one function-call budget unit."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework.exceptions import UserInputRequiredException
+
+    calls = 0
+
+    @tool(name="guarded_input_tool", approval_mode="always_require")
+    def guarded_input_tool() -> str:
+        nonlocal calls
+        calls += 1
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+            ]
+        )
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    function_call = Content.from_function_call(
+        call_id="call_user_input_budget",
+        name="guarded_input_tool",
+        arguments="{}",
+    )
+    budget_state: dict[str, int] = {}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected model call")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            stream=True,
+            options={"tools": [guarded_input_tool]},
+        )
+        first_updates = [update async for update in first_stream]
+        approval_request = next(
+            content
+            for update in first_updates
+            for content in update.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            stream=True,
+            options={"tools": [guarded_input_tool]},
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [[content.type for content in update.contents] for update in resumed_updates] == [
+            ["oauth_consent_request", "oauth_consent_request"]
+        ]
+        assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["unexpected model call"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            options={"tools": [guarded_input_tool]},
+        )
+        approval_request = next(
+            content
+            for message in first_response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            options={"tools": [guarded_input_tool]},
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+        assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    assert calls == 1
+    assert budget_state["total_function_calls"] == 1
+    user_input_requests = [
+        content for message in resumed_response.messages for content in message.contents if content.user_input_request
+    ]
+    assert [content.consent_link for content in user_input_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_approval_resume_error_limit_forces_final_no_tool_response(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
@@ -4514,6 +4692,7 @@ async def test_approval_resume_error_limit_forces_final_no_tool_response(
         )
 
     assert calls == 1
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
         ["function_result"],
         ["text"],
@@ -5033,6 +5212,7 @@ async def test_user_input_request_propagates_through_as_tool(chat_client_base: S
 
 async def test_user_input_request_multiple_contents_propagate(chat_client_base: SupportsChatGetResponse):
     """Test that multiple user_input_request items in a single exception all propagate to the parent response."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
     from agent_framework.exceptions import UserInputRequiredException
 
     @tool(name="multi_request_tool", approval_mode="never_require")
@@ -5062,10 +5242,13 @@ async def test_user_input_request_multiple_contents_propagate(chat_client_base: 
             )
         )
     ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    budget_state: dict[str, int] = {}
 
     response = await chat_client_base.get_response(
         [Message(role="user", contents=["do something"])],
         options={"tool_choice": "auto", "tools": [multi_request]},
+        client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
     )
 
     user_requests = [
@@ -5081,6 +5264,7 @@ async def test_user_input_request_multiple_contents_propagate(chat_client_base: 
         "https://example.com/consent2",
         "https://example.com/consent3",
     }
+    assert budget_state["total_function_calls"] == 1
 
 
 async def test_user_input_request_empty_contents_returns_fallback(chat_client_base: SupportsChatGetResponse):

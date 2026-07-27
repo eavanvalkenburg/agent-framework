@@ -153,6 +153,8 @@ agent_framework/
   normalization matches ordered call occurrences and consumes approved results per occurrence rather than using one
   global result per `call_id`. All contents produced by one execution remain one result group and are consumed
   together, including multiple user-input requests.
+- Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
+  executions that pause for user input still consume `max_function_calls`.
 - `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
   retain them in their backing store for audit, but the base `HistoryProvider.before_run` filters them from later
   model replay; the normalized model transcript contains the function call and one terminal function result.

@@ -1836,26 +1836,6 @@ async def _try_execute_function_call_groups(
     return [result_contents for result_contents, _ in execution_results], should_terminate
 
 
-async def _try_execute_function_calls(  # pyright: ignore[reportUnusedFunction]
-    custom_args: dict[str, Any],
-    function_calls: Sequence[Content],
-    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
-    config: FunctionInvocationConfiguration,
-    invocation_session: AgentSession | None = None,
-    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
-) -> tuple[Sequence[Content], bool]:
-    """Execute multiple function calls concurrently and return flattened results."""
-    result_groups, should_terminate = await _try_execute_function_call_groups(
-        custom_args=custom_args,
-        function_calls=function_calls,
-        tools=tools,
-        config=config,
-        invocation_session=invocation_session,
-        middleware_pipeline=middleware_pipeline,
-    )
-    return [content for result_group in result_groups for content in result_group], should_terminate
-
-
 @dataclass
 class _FunctionExecutionBatch:
     """Results from one ordered batch of function-call executions."""
@@ -2495,6 +2475,7 @@ def _handle_function_call_results(
     *,
     response: ChatResponse,
     execution_results: list[Content],
+    function_call_count: int,
     function_call_messages: list[Message] | None,
     errors_in_a_row: int,
     had_errors: bool,
@@ -2503,7 +2484,6 @@ def _handle_function_call_results(
     """Append execution results to the response and determine the next loop action."""
     from ._types import ChatResponseUpdate, Message
 
-    function_call_count = sum(1 for result in execution_results if result.type == "function_result")
     if any(
         result.type in {"function_approval_request", "function_call"} or result.user_input_request
         for result in execution_results
@@ -2569,7 +2549,6 @@ async def _resolve_approval_responses(
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
-    execution_results: list[Content] = []
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
@@ -2578,7 +2557,6 @@ async def _resolve_approval_responses(
             function_calls=responses_to_execute,
             options=options,
         )
-        execution_results = execution.contents
         execution_result_groups = execution.result_groups
         should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
@@ -2591,7 +2569,7 @@ async def _resolve_approval_responses(
         pending_approval_responses,
         execution_result_groups,
     )
-    executed_function_count = sum(1 for result in execution_results if result.type == "function_result")
+    executed_function_count = len(execution_result_groups)
     requires_user_input = any(
         result.type == "function_call" or result.user_input_request for result in terminal_contents
     )
@@ -2640,6 +2618,7 @@ async def _process_model_function_calls(
     processing_result = _handle_function_call_results(
         response=response,
         execution_results=execution.contents,
+        function_call_count=len(execution.result_groups),
         function_call_messages=function_call_messages,
         errors_in_a_row=errors_in_a_row,
         had_errors=execution.had_errors,
@@ -2780,14 +2759,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_errors=max_errors,
                 execute_function_calls=execute_function_calls,
             )
-            if function_processing.action == "return":
-                response.usage_details = aggregated_usage
-                return _clear_internal_conversation_id(response)
             total_function_calls = _record_function_calls(
                 budget_state,
                 total_function_calls,
                 function_processing.function_call_count,
             )
+            if function_processing.action == "return":
+                response.usage_details = aggregated_usage
+                return _clear_internal_conversation_id(response)
             if function_processing.action == "stop":
                 options["tool_choice"] = "none"
             else:

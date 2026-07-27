@@ -524,6 +524,47 @@ async def test_resolve_approval_responses_returns_only_approved() -> None:
     assert "rejected" in str(rejection_results[0].result).lower()
 
 
+async def test_resolve_approval_responses_preserves_follow_up_user_input_group() -> None:
+    """Approval-time follow-up requests stay grouped and do not emit a synthetic tool result."""
+    from agent_framework import Message
+    from agent_framework.exceptions import UserInputRequiredException
+
+    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
+
+    def request_consent() -> str:
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+            ]
+        )
+
+    consent_tool = FunctionTool(
+        name="request_consent",
+        description="Request two consent steps",
+        func=request_consent,
+        approval_mode="always_require",
+    )
+    function_call = Content.from_function_call(call_id="call_consent", name="request_consent", arguments="{}")
+    approval_request = Content.from_function_approval_request(id="approval_consent", function_call=function_call)
+    messages: list[Any] = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+    ]
+    agent = StubAgent(updates=[], default_options={"tools": [consent_tool]})
+
+    results = await _resolve_approval_responses(messages, [consent_tool], agent, {})
+
+    follow_up_requests = [content for message in messages for content in message.contents if content.user_input_request]
+    assert results == []
+    assert [request.consent_link for request in follow_up_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+    assert not [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert any(message.role == "assistant" and message.contents == follow_up_requests for message in messages)
+
+
 class TestApprovalToolResultDisplayChannel:
     """Approved tools using ``state_update(..., tool_result=...)`` must route the
     display payload to the UI event while ``flow.tool_results`` still receives
