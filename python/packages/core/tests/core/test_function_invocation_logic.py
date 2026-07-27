@@ -2447,8 +2447,8 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_without_pla
         messages,
         _collect_approval_responses(messages),
         [
-            Content.from_function_result(call_id="call_2", result="second result"),
-            Content.from_function_result(call_id="call_1", result="first result"),
+            [Content.from_function_result(call_id="call_2", result="second result")],
+            [Content.from_function_result(call_id="call_1", result="first result")],
         ],
     )
 
@@ -2486,7 +2486,7 @@ def test_replace_approval_contents_with_results_allows_reused_call_id_after_comp
     _replace_approval_contents_with_results(
         messages,
         _collect_approval_responses(messages),
-        [Content.from_function_result(call_id="call_reused", result="second output")],
+        [[Content.from_function_result(call_id="call_reused", result="second output")]],
     )
 
     function_calls = [c for m in messages for c in m.contents if c.type == "function_call"]
@@ -2518,7 +2518,7 @@ def test_replace_approval_contents_with_results_deduplicates_replayed_approval_r
     _replace_approval_contents_with_results(
         messages,
         _collect_approval_responses(messages),
-        [Content.from_function_result(call_id="call_1", result="done")],
+        [[Content.from_function_result(call_id="call_1", result="done")]],
     )
 
     calls = [content for message in messages for content in message.contents if content.type == "function_call"]
@@ -2552,7 +2552,7 @@ def test_replace_approval_contents_with_results_ignores_already_resolved_respons
     _replace_approval_contents_with_results(
         messages,
         _collect_approval_responses(messages),
-        [Content.from_function_result(call_id="call_reused", result="new result")],
+        [[Content.from_function_result(call_id="call_reused", result="new result")]],
     )
 
     assert not [
@@ -2596,7 +2596,7 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_occurr
     _replace_approval_contents_with_results(
         messages,
         _collect_approval_responses(messages),
-        [Content.from_function_result(call_id="call_reused", result="second output")],
+        [[Content.from_function_result(call_id="call_reused", result="second output")]],
     )
 
     calls = [content for message in messages for content in message.contents if content.type == "function_call"]
@@ -2607,6 +2607,50 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_occurr
         ("call_reused", "second output"),
         ("call_reused", "Error: Tool call invocation was rejected by user."),
     ]
+
+
+def test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id() -> None:
+    """All contents from one execution stay with its approval occurrence when call ids are reused."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    first_call, first_request, first_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_1",
+        tool_name="run_skill_script",
+    )
+    second_call, second_request, second_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_2",
+        tool_name="run_skill_script",
+    )
+    first_user_requests = [
+        Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+        Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+    ]
+    for request in first_user_requests:
+        request.call_id = "call_reused"
+    second_result = Content.from_function_result(call_id="call_reused", result="second output")
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="user", contents=[first_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    resolved_contents = _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [first_user_requests, [second_result]],
+    )
+
+    user_requests = [content for message in messages for content in message.contents if content.user_input_request]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [request.consent_link for request in user_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+    assert results == [second_result]
+    assert resolved_contents == [*first_user_requests, second_result]
 
 
 def test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders() -> None:
@@ -2643,8 +2687,8 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_placeh
         messages,
         _collect_approval_responses(messages),
         [
-            Content.from_function_result(call_id="call_reused", result="second output"),
-            Content.from_function_result(call_id="call_reused", result="third output"),
+            [Content.from_function_result(call_id="call_reused", result="second output")],
+            [Content.from_function_result(call_id="call_reused", result="third output")],
         ],
     )
 
@@ -2720,8 +2764,8 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeho
         messages,
         _collect_approval_responses(messages),
         [
-            Content.from_function_result(call_id="call_2", result="second result"),
-            Content.from_function_result(call_id="call_1", result="first result"),
+            [Content.from_function_result(call_id="call_2", result="second result")],
+            [Content.from_function_result(call_id="call_1", result="first result")],
         ],
     )
 
@@ -2753,8 +2797,10 @@ def test_replace_approval_contents_with_results_skips_results_without_call_id() 
         messages,
         _collect_approval_responses(messages),
         [
-            Content.from_function_result(call_id=None, result="ignored result"),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-            Content.from_function_result(call_id="call_1", result="first result"),
+            [
+                Content.from_function_result(call_id=None, result="ignored result")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            ],
+            [Content.from_function_result(call_id="call_1", result="first result")],
         ],
     )
 
@@ -2798,8 +2844,8 @@ def test_replace_approval_contents_with_results_prunes_emptied_messages() -> Non
         messages,
         _collect_approval_responses(messages),
         [
-            Content.from_function_result(call_id="call_1", result="first result"),
-            Content.from_function_result(call_id="call_2", result="second result"),
+            [Content.from_function_result(call_id="call_1", result="first result")],
+            [Content.from_function_result(call_id="call_2", result="second result")],
         ],
     )
 

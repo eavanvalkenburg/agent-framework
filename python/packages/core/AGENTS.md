@@ -151,7 +151,8 @@ agent_framework/
   response.
 - Approval/result correlation is occurrence-aware. A `call_id` may be reused after a completed round, so approval
   normalization matches ordered call occurrences and consumes approved results per occurrence rather than using one
-  global result per `call_id`.
+  global result per `call_id`. All contents produced by one execution remain one result group and are consumed
+  together, including multiple user-input requests.
 - `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
   retain them in their backing store for audit, but the base `HistoryProvider.before_run` filters them from later
   model replay; the normalized model transcript contains the function call and one terminal function result.

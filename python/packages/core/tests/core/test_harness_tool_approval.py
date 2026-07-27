@@ -287,11 +287,11 @@ async def test_approval_resume_filters_resolved_control_items_from_file_history(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
-async def test_approval_resume_returns_user_input_request_without_another_model_call(
+async def test_approval_resume_returns_all_user_input_requests_without_another_model_call(
     chat_client_base: MockBaseChatClient,
     streaming: bool,
 ) -> None:
-    """User input requested during approved execution should pause before another model call."""
+    """All user input requested during approved execution should return before another model call."""
     from agent_framework.exceptions import UserInputRequiredException
 
     calls = 0
@@ -301,7 +301,11 @@ async def test_approval_resume_returns_user_input_request_without_another_model_
         nonlocal calls
         calls += 1
         raise UserInputRequiredException(
-            contents=[Content.from_oauth_consent_request(consent_link="https://example.com/consent")]
+            contents=[
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-3"),
+            ]
         )
 
     agent = Agent(client=chat_client_base, tools=[oauth_tool])
@@ -324,8 +328,10 @@ async def test_approval_resume_returns_user_input_request_without_another_model_
         resumed_updates = [update async for update in resumed_stream]
         resumed_response = await resumed_stream.get_final_response()
         assert len(chat_client_base.streaming_responses) == 1
-        assert [content.type for update in resumed_updates for content in update.user_input_requests] == [
-            "oauth_consent_request"
+        assert [content.consent_link for update in resumed_updates for content in update.user_input_requests] == [
+            "https://example.com/consent-1",
+            "https://example.com/consent-2",
+            "https://example.com/consent-3",
         ]
     else:
         chat_client_base.run_responses = [
@@ -339,7 +345,11 @@ async def test_approval_resume_returns_user_input_request_without_another_model_
         )
         assert len(chat_client_base.run_responses) == 1
 
-    assert [content.type for content in resumed_response.user_input_requests] == ["oauth_consent_request"]
+    assert [content.consent_link for content in resumed_response.user_input_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+        "https://example.com/consent-3",
+    ]
     assert resumed_response.messages[0].role == "assistant"
     assert calls == 1
 

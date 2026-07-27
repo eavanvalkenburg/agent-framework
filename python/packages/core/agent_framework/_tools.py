@@ -1699,15 +1699,15 @@ async def _execute_single_function_call(
         ], False
 
 
-async def _try_execute_function_calls(
+async def _try_execute_function_call_groups(
     custom_args: dict[str, Any],
     function_calls: Sequence[Content],
     tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
-) -> tuple[Sequence[Content], bool]:
-    """Execute multiple function calls concurrently.
+) -> tuple[list[list[Content]], bool]:
+    """Execute multiple function calls concurrently while preserving per-call result groups.
 
     Args:
         custom_args: Custom arguments to pass to each function.
@@ -1719,9 +1719,7 @@ async def _try_execute_function_calls(
 
     Returns:
         A tuple of:
-        - A list of Content containing the results of each function call,
-          or the approval requests if any function requires approval,
-          or the original function calls if any are declaration only.
+        - One ordered content group per function call.
         - True when function middleware requested loop termination.
     """
     from ._types import Content
@@ -1732,7 +1730,7 @@ async def _try_execute_function_calls(
         if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
     ]
     if not function_calls:
-        return ([], False)
+        return [], False
 
     tool_map = _get_tool_map(tools)
     # The live tools list (when tools is the run-local list) is exposed on the
@@ -1803,7 +1801,7 @@ async def _try_execute_function_calls(
             visible_requests,
             already_approved_requests,
         )
-        return (visible_requests, False)
+        return [[request] for request in visible_requests], False
     if has_declaration_only_call:
         # return the declaration only tools to the user, since we cannot execute them.
         # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
@@ -1813,7 +1811,7 @@ async def _try_execute_function_calls(
                 function_call.user_input_request = True
                 function_call.id = function_call.call_id
                 declaration_only_calls.append(function_call)
-        return (declaration_only_calls, False)
+        return [[function_call] for function_call in declaration_only_calls], False
 
     # Create each task inside a copied context so the active agent span is
     # preserved for every parallel tool invocation.
@@ -1834,9 +1832,51 @@ async def _try_execute_function_calls(
     ]
     execution_results = await asyncio.gather(*execution_tasks)
 
-    contents = [content for result_contents, _ in execution_results for content in result_contents]
     should_terminate = any(terminate for _, terminate in execution_results)
-    return contents, should_terminate
+    return [result_contents for result_contents, _ in execution_results], should_terminate
+
+
+async def _try_execute_function_calls(  # pyright: ignore[reportUnusedFunction]
+    custom_args: dict[str, Any],
+    function_calls: Sequence[Content],
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
+    config: FunctionInvocationConfiguration,
+    invocation_session: AgentSession | None = None,
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+) -> tuple[Sequence[Content], bool]:
+    """Execute multiple function calls concurrently and return flattened results."""
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args=custom_args,
+        function_calls=function_calls,
+        tools=tools,
+        config=config,
+        invocation_session=invocation_session,
+        middleware_pipeline=middleware_pipeline,
+    )
+    return [content for result_group in result_groups for content in result_group], should_terminate
+
+
+@dataclass
+class _FunctionExecutionBatch:
+    """Results from one ordered batch of function-call executions."""
+
+    result_groups: list[list[Content]]
+    should_terminate: bool = False
+
+    @property
+    def contents(self) -> list[Content]:
+        """Flatten the ordered result groups for ordinary response processing."""
+        return [content for result_group in self.result_groups for content in result_group]
+
+    @property
+    def had_errors(self) -> bool:
+        """Whether any execution produced an error result."""
+        return any(
+            content.exception is not None
+            for result_group in self.result_groups
+            for content in result_group
+            if content.type == "function_result"
+        )
 
 
 async def _execute_function_calls(
@@ -1847,11 +1887,11 @@ async def _execute_function_calls(
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
-) -> tuple[list[Content], bool, bool]:
+) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
     if not tools:
-        return [], False, False
-    results, should_terminate = await _try_execute_function_calls(
+        return _FunctionExecutionBatch(result_groups=[])
+    result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args=custom_args,
         function_calls=function_calls,
         tools=tools,
@@ -1859,8 +1899,10 @@ async def _execute_function_calls(
         middleware_pipeline=middleware_pipeline,
         config=config,
     )
-    had_errors = any(fcr.exception is not None for fcr in results if fcr.type == "function_result")
-    return list(results), should_terminate, had_errors
+    return _FunctionExecutionBatch(
+        result_groups=result_groups,
+        should_terminate=should_terminate,
+    )
 
 
 def _update_conversation_id(
@@ -2166,7 +2208,7 @@ class _ApprovalCallOccurrence:
 def _replace_approval_contents_with_results(
     messages: list[Message],
     pending_approval_responses: dict[str, Content],
-    approved_function_results: list[Content],
+    approved_function_result_groups: list[list[Content]],
 ) -> list[Content]:
     """Replace approval request/response contents with function call/result contents in-place.
 
@@ -2179,14 +2221,16 @@ def _replace_approval_contents_with_results(
         Content,
     )
 
-    results_by_call_id: dict[str, deque[Content]] = {}
-    for approved_result in approved_function_results:
-        if approved_result.call_id is not None:
-            results_by_call_id.setdefault(approved_result.call_id, deque()).append(approved_result)
+    result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
+    for result_group in approved_function_result_groups:
+        call_id = next((result.call_id for result in result_group if result.call_id is not None), None)
+        if call_id is not None:
+            result_groups_by_call_id.setdefault(call_id, deque()).append(result_group)
 
     occurrences_by_call_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     occurrences_by_approval_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     seen_approval_requests: set[tuple[str, str, str | None, str]] = set()
+    placeholder_replacements: list[tuple[Message, Content, list[Content]]] = []
     resolved_contents: list[Content] = []
 
     def find_open_occurrence(call_id: str, *, require_unbound: bool = False) -> _ApprovalCallOccurrence | None:
@@ -2204,17 +2248,9 @@ def _replace_approval_contents_with_results(
                 return occurrence
         return None
 
-    def replace_placeholder(occurrence: _ApprovalCallOccurrence, replacement: Content) -> bool:
-        if occurrence.placeholder_message is None or occurrence.placeholder_content is None:
-            return False
-        for idx, existing in enumerate(occurrence.placeholder_message.contents):
-            if existing is occurrence.placeholder_content:
-                occurrence.placeholder_message.contents[idx] = replacement
-                return True
-        return False
-
     for msg in messages:
         contents_to_remove: list[int] = []
+        replacement_groups_by_index: dict[int, list[Content]] = {}
 
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_call" and content.call_id:
@@ -2261,26 +2297,36 @@ def _replace_approval_contents_with_results(
                 occurrence = find_approval_occurrence(content.id)
                 if occurrence is None:
                     occurrence = find_open_occurrence(call_id)
-                replacement: Content | None
+                replacements: list[Content] | None
                 if content.approved:
-                    call_results = results_by_call_id.get(call_id)
-                    replacement = call_results.popleft() if call_results else None
+                    call_result_groups = result_groups_by_call_id.get(call_id)
+                    replacements = call_result_groups.popleft() if call_result_groups else None
                 else:
-                    replacement = Content.from_function_result(
-                        call_id=call_id,
-                        result="Error: Tool call invocation was rejected by user.",
-                        additional_properties=content.function_call.additional_properties,
-                    )
-                if replacement is None:
+                    replacements = [
+                        Content.from_function_result(
+                            call_id=call_id,
+                            result="Error: Tool call invocation was rejected by user.",
+                            additional_properties=content.function_call.additional_properties,
+                        )
+                    ]
+                if not replacements:
                     continue
-                if occurrence is not None and replace_placeholder(occurrence, replacement):
+                if (
+                    occurrence is not None
+                    and occurrence.placeholder_message is not None
+                    and occurrence.placeholder_content is not None
+                ):
+                    placeholder_replacements.append((
+                        occurrence.placeholder_message,
+                        occurrence.placeholder_content,
+                        replacements,
+                    ))
                     contents_to_remove.append(content_idx)
                 else:
-                    msg.contents[content_idx] = replacement
-                    msg.role = "assistant" if replacement.user_input_request else "tool"
+                    replacement_groups_by_index[content_idx] = replacements
                 if occurrence is not None:
                     occurrence.closed = True
-                resolved_contents.append(replacement)
+                resolved_contents.extend(replacements)
             elif content.type == "function_result":
                 if content.call_id is None:
                     continue
@@ -2293,8 +2339,34 @@ def _replace_approval_contents_with_results(
                 else:
                     occurrence.closed = True
 
-        for idx in reversed(contents_to_remove):
-            msg.contents.pop(idx)
+        if replacement_groups_by_index:
+            msg.role = (
+                "assistant"
+                if any(
+                    replacement.user_input_request
+                    for replacements in replacement_groups_by_index.values()
+                    for replacement in replacements
+                )
+                else "tool"
+            )
+        if contents_to_remove or replacement_groups_by_index:
+            removed_indexes = set(contents_to_remove)
+            updated_contents: list[Content] = []
+            for idx, existing in enumerate(msg.contents):
+                if idx in removed_indexes:
+                    continue
+                replacements = replacement_groups_by_index.get(idx)
+                if replacements is not None:
+                    updated_contents.extend(replacements)
+                else:
+                    updated_contents.append(existing)
+            msg.contents = updated_contents
+
+    for placeholder_message, placeholder_content, replacements in placeholder_replacements:
+        for idx, existing in enumerate(placeholder_message.contents):
+            if existing is placeholder_content:
+                placeholder_message.contents[idx : idx + 1] = replacements
+                break
 
     messages_to_remove: list[int] = []
     for msg_idx, msg in enumerate(messages):
@@ -2416,7 +2488,7 @@ class _FunctionProcessingResult:
     streaming_update: ChatResponseUpdate | None = None
 
 
-_FunctionCallExecutor: TypeAlias = Callable[..., Awaitable[tuple[list["Content"], bool, bool]]]
+_FunctionCallExecutor: TypeAlias = Callable[..., Awaitable[_FunctionExecutionBatch]]
 
 
 def _handle_function_call_results(
@@ -2498,23 +2570,26 @@ async def _resolve_approval_responses(
 
     responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
     execution_results: list[Content] = []
+    execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
     if responses_to_execute:
-        results, should_terminate, had_errors = await execute_function_calls(
+        execution = await execute_function_calls(
             function_calls=responses_to_execute,
             options=options,
         )
-        execution_results = list(results)
+        execution_results = execution.contents
+        execution_result_groups = execution.result_groups
+        should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
             errors_in_a_row,
-            had_errors=had_errors,
+            had_errors=execution.had_errors,
             max_errors=max_errors,
         )
     terminal_contents = _replace_approval_contents_with_results(
         prepared_messages,
         pending_approval_responses,
-        execution_results,
+        execution_result_groups,
     )
     executed_function_count = sum(1 for result in execution_results if result.type == "function_result")
     requires_user_input = any(
@@ -2558,19 +2633,19 @@ async def _process_model_function_calls(
             _prepend_function_call_messages(response, function_call_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
-    execution_results, should_terminate, had_errors = await execute_function_calls(
+    execution = await execute_function_calls(
         function_calls=function_calls,
         options=options,
     )
     processing_result = _handle_function_call_results(
         response=response,
-        execution_results=execution_results,
+        execution_results=execution.contents,
         function_call_messages=function_call_messages,
         errors_in_a_row=errors_in_a_row,
-        had_errors=had_errors,
+        had_errors=execution.had_errors,
         max_errors=max_errors,
     )
-    if should_terminate:
+    if execution.should_terminate:
         processing_result.action = "return"
     return processing_result
 
