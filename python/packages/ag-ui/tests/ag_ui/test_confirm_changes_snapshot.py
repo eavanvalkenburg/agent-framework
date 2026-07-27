@@ -7,7 +7,10 @@ from typing import Any
 
 from agent_framework import Content, Message
 
-from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot
+from agent_framework_ag_ui._agent_run import (
+    _clean_resolved_approvals_from_snapshot,
+    _confirm_changes_target_call_id,
+)
 
 
 def _confirm_snapshot(
@@ -42,6 +45,41 @@ def _confirm_snapshot(
             "content": json.dumps({"accepted": accepted, "steps": []}),
         },
     ]
+
+
+def test_confirm_changes_target_ignores_non_list_tool_calls() -> None:
+    snapshot_messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "tool_calls": {"id": "call_confirm"},
+        }
+    ]
+
+    target_call_id = _confirm_changes_target_call_id(snapshot_messages, "call_confirm", {})
+
+    assert target_call_id is None
+
+
+def test_confirm_changes_target_rejects_malformed_arguments_json() -> None:
+    snapshot_messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_confirm",
+                    "type": "function",
+                    "function": {
+                        "name": "confirm_changes",
+                        "arguments": "{not-json",
+                    },
+                }
+            ],
+        }
+    ]
+
+    target_call_id = _confirm_changes_target_call_id(snapshot_messages, "call_confirm", {})
+
+    assert target_call_id is None
 
 
 def test_confirm_changes_snapshot_uses_original_call_id_with_multiple_results() -> None:

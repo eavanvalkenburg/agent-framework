@@ -565,6 +565,49 @@ async def test_resolve_approval_responses_preserves_follow_up_user_input_group()
     assert any(message.role == "assistant" and message.contents == follow_up_requests for message in messages)
 
 
+async def test_resolve_approval_responses_returns_failure_when_grouped_execution_raises(
+    monkeypatch: Any,
+) -> None:
+    """A grouped-execution failure produces one deterministic result for the approved call."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
+
+    async def fail_grouped_execution(**kwargs: Any) -> tuple[list[list[Content]], bool]:
+        del kwargs
+        raise RuntimeError("execution failed")
+
+    monkeypatch.setattr(
+        "agent_framework_ag_ui._agent_run._try_execute_function_call_groups",
+        fail_grouped_execution,
+    )
+    weather_tool = _make_weather_tool()
+    function_call = Content.from_function_call(
+        call_id="call_execution_failure",
+        name="get_weather",
+        arguments='{"city": "Seattle"}',
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval_execution_failure",
+        function_call=function_call,
+    )
+    messages: list[Any] = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+    ]
+    agent = StubAgent(updates=[], default_options={"tools": [weather_tool]})
+
+    results = await _resolve_approval_responses(messages, [weather_tool], agent, {})
+
+    assert len(results) == 1
+    assert results[0].type == "function_result"
+    assert results[0].call_id == "call_execution_failure"
+    assert results[0].result == "Error: Tool call invocation failed."
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["Error: Tool call invocation failed."]
+
+
 class TestApprovalToolResultDisplayChannel:
     """Approved tools using ``state_update(..., tool_result=...)`` must route the
     display payload to the UI event while ``flow.tool_results`` still receives
