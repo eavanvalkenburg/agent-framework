@@ -155,6 +155,9 @@ agent_framework/
   together, including multiple user-input requests.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
   executions that pause for user input still consume `max_function_calls`.
+- Declaration-only streamed calls emit their arguments only from the provider stream. The function layer sends a
+  metadata-only follow-up (`arguments=None`) so `id` and `user_input_request` survive final aggregation without
+  duplicating arguments.
 - `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
   retain them in their backing store for audit, but the base `HistoryProvider.before_run` filters them from later
   model replay; the normalized model transcript contains the function call and one terminal function result.
