@@ -101,16 +101,24 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _function_call_ids(message: Message) -> set[str]:
-    if message.role != "assistant":
-        return set()
-    return {content.call_id for content in message.contents if content.type == "function_call" and content.call_id}
+def _unambiguous_function_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    unmatched_declaration_indices: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int]] = []
 
-
-def _function_result_ids(message: Message) -> set[str]:
-    if message.role != "tool":
-        return set()
-    return {content.call_id for content in message.contents if content.type == "function_result" and content.call_id}
+    for message_index, message in enumerate(messages):
+        if message.role == "assistant":
+            for content in message.contents:
+                if content.type == "function_call" and content.call_id:
+                    unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+        elif message.role == "tool":
+            for content in message.contents:
+                if content.type != "function_result" or not content.call_id:
+                    continue
+                candidates = unmatched_declaration_indices.get(content.call_id)
+                if candidates is None or len(candidates) != 1:
+                    continue
+                pairs.append((candidates.pop(), message_index))
+    return pairs
 
 
 def _ensure_message_ids(
@@ -139,25 +147,16 @@ def _group_id_for(message: Message, group_index: int) -> str:
 
 
 def _link_function_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
-    """Link non-adjacent function results to their unique declaration group."""
+    """Link non-adjacent function results to unambiguous declaration occurrences."""
     if len(spans) < 2:
         return
 
-    declaration_spans: dict[str, set[int]] = {}
-    result_ids_by_span: list[set[str]] = []
+    span_by_message_index: dict[int, int] = {}
     for span_index, span in enumerate(spans):
         start_index = int(span["start_index"])
         end_index = int(span["end_index"])
-        declared_ids: set[str] = set()
-        result_ids: set[str] = set()
-        for message in messages[start_index : end_index + 1]:
-            declared_ids.update(_function_call_ids(message))
-            result_ids.update(_function_result_ids(message))
-        for call_id in declared_ids:
-            declaration_spans.setdefault(call_id, set()).add(span_index)
-        result_ids_by_span.append(result_ids)
-    if not declaration_spans or not any(result_ids_by_span):
-        return
+        for message_index in range(start_index, end_index + 1):
+            span_by_message_index[message_index] = span_index
 
     parents = list(range(len(spans)))
 
@@ -178,14 +177,11 @@ def _link_function_call_result_spans(messages: Sequence[Message], spans: list[di
         return True
 
     linked = False
-    for result_span_index, result_ids in enumerate(result_ids_by_span):
-        for call_id in result_ids:
-            matches = declaration_spans.get(call_id)
-            if matches is None or len(matches) != 1:
-                continue
-            declaration_span_index = next(iter(matches))
-            if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
-                linked = True
+    for declaration_message_index, result_message_index in _unambiguous_function_call_result_pairs(messages):
+        declaration_span_index = span_by_message_index[declaration_message_index]
+        result_span_index = span_by_message_index[result_message_index]
+        if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
+            linked = True
     if not linked:
         return
 
@@ -511,25 +507,24 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
 
 
 def _function_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
-    result_ids: set[str] = set()
-    for message in messages[start_index:]:
-        result_ids.update(_function_result_ids(message))
-    if not result_ids:
-        return start_index
-
-    declaration_indices: dict[str, set[int]] = {}
-    for index, message in enumerate(messages):
-        for call_id in _function_call_ids(message):
-            declaration_indices.setdefault(call_id, set()).add(index)
-
+    unmatched_declaration_indices: dict[str, list[int]] = {}
     matching_indices: list[int] = []
-    for call_id in result_ids:
-        indices = declaration_indices.get(call_id)
-        if indices is None or len(indices) != 1:
-            continue
-        declaration_index = next(iter(indices))
-        if declaration_index < start_index:
-            matching_indices.append(declaration_index)
+    for message_index, message in enumerate(messages):
+        if message.role == "assistant":
+            for content in message.contents:
+                if content.type == "function_call" and content.call_id:
+                    unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+        elif message.role == "tool":
+            for content in message.contents:
+                if content.type != "function_result" or not content.call_id:
+                    continue
+                candidates = unmatched_declaration_indices.get(content.call_id)
+                if not candidates:
+                    continue
+                if message_index >= start_index:
+                    matching_indices.extend(index for index in candidates if index < start_index)
+                if len(candidates) == 1:
+                    candidates.pop()
     if not matching_indices:
         return start_index
 

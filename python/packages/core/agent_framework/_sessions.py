@@ -22,6 +22,7 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
+from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -34,6 +35,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
@@ -477,14 +479,59 @@ class ContextProvider:
         """
 
 
+def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
+    unresolved_requests_by_id: dict[str, Content] = {}
+    unresolved_local_responses_by_id: dict[str, Content] = {}
+    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                function_call = content.function_call
+                if content.id is not None and function_call is not None and function_call.call_id is not None:
+                    unresolved_requests_by_id.setdefault(content.id, content)
+                continue
+            if content.type == "function_approval_response":
+                function_call = content.function_call
+                if content.id is not None:
+                    unresolved_requests_by_id.pop(content.id, None)
+                if (
+                    content.id is not None
+                    and function_call is not None
+                    and function_call.call_id is not None
+                    and not function_call.additional_properties.get("server_label")
+                    and content.id not in unresolved_local_responses_by_id
+                ):
+                    unresolved_local_responses_by_id[content.id] = content
+                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                continue
+            if content.call_id is None:
+                continue
+            is_terminal_result = content.type == "function_result"
+            is_follow_up_request = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if not (is_terminal_result or is_follow_up_request):
+                continue
+            if response_ids := local_response_ids_by_call_id.get(content.call_id):
+                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+
+    return {
+        id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
+    }
+
+
 def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:
-    """Remove approval request/response wrappers from history before model replay."""
+    """Remove resolved approval controls while preserving pending occurrences."""
+    controls_to_keep = _approval_controls_to_keep(messages)
     filtered_messages: list[Message] = []
     for message in messages:
         filtered_contents = [
             content
             for content in message.contents
             if content.type not in {"function_approval_request", "function_approval_response"}
+            or id(content) in controls_to_keep
         ]
         if not filtered_contents:
             continue

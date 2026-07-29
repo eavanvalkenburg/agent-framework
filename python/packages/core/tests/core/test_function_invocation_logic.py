@@ -2455,6 +2455,34 @@ def test_collect_approval_responses_consumes_matching_follow_up_request_occurren
     assert pending_responses == {"approval_2": second_response}
 
 
+def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
+    from agent_framework._tools import _remove_unanswered_approval_batches_from_model_input
+
+    local_call = Content.from_function_call(call_id="call_local", name="local_tool", arguments="{}")
+    hosted_call = Content.from_function_call(
+        call_id="call_hosted",
+        name="hosted_tool",
+        arguments="{}",
+        additional_properties={"server_label": "hosted_server"},
+    )
+    hosted_request = Content.from_function_approval_request(id="approval_hosted", function_call=hosted_call)
+    local_result = Content.from_function_result(call_id="call_local", result="local result")
+    unrelated_content = Content.from_text("unrelated turn")
+    messages = [
+        Message(role="assistant", contents=[local_call, hosted_call, hosted_request]),
+        Message(role="tool", contents=[local_result]),
+        Message(role="user", contents=[unrelated_content]),
+    ]
+
+    _remove_unanswered_approval_batches_from_model_input(messages)
+
+    assert [(message.role, message.contents) for message in messages] == [
+        ("assistant", [local_call]),
+        ("tool", [local_result]),
+        ("user", [unrelated_content]),
+    ]
+
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
@@ -4683,6 +4711,95 @@ async def test_approval_resume_user_input_counts_toward_function_call_budget(
         "https://example.com/consent-1",
         "https://example.com/consent-2",
     ]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_separates_terminal_results_from_follow_up_requests(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A successful sibling stays tool-role when another approved call pauses for user input."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    completed_calls = 0
+    paused_calls = 0
+
+    @tool(name="completed_tool", approval_mode="always_require")
+    def completed_tool() -> str:
+        nonlocal completed_calls
+        completed_calls += 1
+        return "completed"
+
+    @tool(name="paused_tool", approval_mode="always_require")
+    def paused_tool() -> str:
+        nonlocal paused_calls
+        paused_calls += 1
+        raise UserInputRequiredException(
+            contents=[Content.from_oauth_consent_request(consent_link="https://example.com/consent")]
+        )
+
+    function_calls = [
+        Content.from_function_call(call_id="call_completed", name="completed_tool", arguments="{}"),
+        Content.from_function_call(call_id="call_paused", name="paused_tool", arguments="{}"),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=function_calls)],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected model call")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run both"])],
+            stream=True,
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        _ = [update async for update in first_stream]
+        first_response = await first_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=function_calls)),
+            ChatResponse(messages=Message(role="assistant", contents=["unexpected model call"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run both"])],
+            options={"tools": [completed_tool, paused_tool]},
+        )
+
+    approval_responses = [
+        request.to_function_approval_response(approved=True)
+        for message in first_response.messages
+        for request in message.contents
+        if request.type == "function_approval_request"
+    ]
+    if streaming:
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=approval_responses)],
+            stream=True,
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["oauth_consent_request"]),
+        ]
+        assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=approval_responses)],
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    assert [
+        (message.role, [content.type for content in message.contents]) for message in resumed_response.messages
+    ] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["oauth_consent_request"]),
+    ]
+    assert resumed_response.messages[0].contents[0].call_id == "call_completed"
+    assert resumed_response.messages[1].contents[0].call_id == "call_paused"
+    assert completed_calls == 1
+    assert paused_calls == 1
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])

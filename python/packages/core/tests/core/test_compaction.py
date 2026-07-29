@@ -296,6 +296,41 @@ def test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids() -> None:
     assert result_group != _group_id(messages[2])
 
 
+def test_group_annotations_pair_completed_reused_call_id_occurrences() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) == _group_id(messages[1])
+    assert _group_id(messages[2]) == _group_id(messages[4])
+    assert _group_id(messages[0]) != _group_id(messages[2])
+    assert _group_id(messages[3]) != _group_id(messages[2])
+
+
+async def test_sliding_window_keeps_reused_call_id_occurrences_atomic() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+    annotate_message_groups(messages)
+
+    await SlidingWindowStrategy(keep_last_groups=1, preserve_system=False)(messages)
+
+    assert messages[2].additional_properties[EXCLUDED_KEY] is True
+    assert messages[4].additional_properties[EXCLUDED_KEY] is True
+    assert _group_id(messages[2]) == _group_id(messages[4])
+    assert messages[3].additional_properties[EXCLUDED_KEY] is False
+
+
 async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
     messages = [
         Message(role="system", contents=["system"]),
@@ -424,6 +459,41 @@ def test_extend_compaction_messages_preserves_adjacent_duplicate_call_pair() -> 
     result_group = _group_id(messages[3])
     assert result_group != _group_id(messages[0])
     assert result_group == _group_id(messages[2])
+
+
+def test_extend_compaction_messages_pairs_completed_reused_call_id_occurrence() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages)
+    second_call_group = _group_id(messages[2])
+
+    extend_compaction_messages(messages, [_tool_result("reused", "second")])
+
+    assert _group_id(messages[4]) == second_call_group
+    assert _group_id(messages[4]) != _group_id(messages[0])
+
+
+def test_extend_compaction_messages_keeps_ambiguous_reused_call_id_unpaired() -> None:
+    messages = [_assistant_function_call("duplicate")]
+    annotate_message_groups(messages)
+    extend_compaction_messages(messages, [Message(role="assistant", contents=["between declarations"])])
+
+    extend_compaction_messages(
+        messages,
+        [
+            _assistant_function_call("duplicate"),
+            Message(role="assistant", contents=["before result"]),
+            _tool_result("duplicate", "result"),
+        ],
+    )
+
+    result_group = _group_id(messages[4])
+    assert result_group != _group_id(messages[0])
+    assert result_group != _group_id(messages[2])
 
 
 def test_append_compaction_message_annotates_new_message() -> None:

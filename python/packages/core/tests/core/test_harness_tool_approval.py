@@ -286,6 +286,67 @@ async def test_approval_resume_filters_resolved_control_items_from_file_history(
     assert calls == 1
 
 
+async def test_pending_approval_from_file_history_stays_resumable_without_model_orphan(
+    chat_client_base: MockBaseChatClient,
+    tmp_path: Path,
+) -> None:
+    """An unrelated turn hides a pending batch from the model without discarding its approval."""
+    calls = 0
+
+    @tool(name="guarded_pending_tool", approval_mode="always_require")
+    def guarded_pending_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved result"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        history_provider = FileHistoryProvider(tmp_path)
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_pending_tool],
+        context_providers=[history_provider],
+    )
+    session = AgentSession(session_id="pending-approval-file-history")
+    function_call = Content.from_function_call(
+        call_id="call_pending_history",
+        name="guarded_pending_tool",
+        arguments="{}",
+    )
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[function_call]))]
+    first_response = await agent.run("run guarded", session=session)
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["unrelated answer"]))]
+    captured_types: list[str] = []
+    original_get_response = chat_client_base._get_non_streaming_response
+
+    async def capture_messages(
+        *,
+        messages: MutableSequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_types.extend(content.type for message in messages for content in message.contents)
+        return await original_get_response(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = capture_messages  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    unrelated_response = await agent.run("unrelated turn", session=session)
+
+    assert unrelated_response.text == "unrelated answer"
+    assert "function_call" not in captured_types
+    assert "function_approval_request" not in captured_types
+    assert calls == 0
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    resumed_response = await agent.run(
+        first_response.user_input_requests[0].to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert resumed_response.text == "done"
+    assert calls == 1
+
+
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_approval_resume_returns_all_user_input_requests_without_another_model_call(
     chat_client_base: MockBaseChatClient,

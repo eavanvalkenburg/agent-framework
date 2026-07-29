@@ -2170,6 +2170,144 @@ def _collect_approval_responses(
     }
 
 
+def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
+    approval_requests_by_id: dict[str, Content] = {}
+    pending_request_ids_by_call_id: dict[str, deque[str]] = {}
+    answered_approval_ids: set[str] = set()
+
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                function_call = content.function_call
+                if content.id is None or function_call is None or function_call.call_id is None:
+                    continue
+                if content.id not in approval_requests_by_id:
+                    approval_requests_by_id[content.id] = content
+                    pending_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                continue
+            if content.type == "function_approval_response":
+                if content.id is not None:
+                    answered_approval_ids.add(content.id)
+                continue
+            if content.call_id is None:
+                continue
+            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_follow_up_request = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if not (is_terminal_result or is_follow_up_request):
+                continue
+            if request_ids := pending_request_ids_by_call_id.get(content.call_id):
+                answered_approval_ids.add(request_ids.popleft())
+
+    return [
+        request for approval_id, request in approval_requests_by_id.items() if approval_id not in answered_approval_ids
+    ]
+
+
+def _approval_request_replay_contents(requests: Sequence[Content]) -> list[Content]:
+    return list(requests)
+
+
+def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
+    pending_requests = _collect_unanswered_approval_requests(messages)
+    if not pending_requests:
+        return
+
+    pending_approval_ids = {request.id for request in pending_requests if request.id is not None}
+    pending_call_ids = {
+        request.function_call.call_id
+        for request in pending_requests
+        if request.function_call is not None and request.function_call.call_id is not None
+    }
+    open_calls_by_id: dict[str, deque[tuple[Content, int]]] = {}
+    bound_call_content_ids: set[int] = set()
+    call_batch_message_indices: set[int] = set()
+    bound_approval_ids: set[str] = set()
+
+    for message_index, message in enumerate(messages):
+        for content in message.contents:
+            if content.type == "function_call" and content.call_id:
+                open_calls_by_id.setdefault(content.call_id, deque()).append((content, message_index))
+                continue
+            if content.type == "function_result" and content.call_id:
+                if open_calls := open_calls_by_id.get(content.call_id):
+                    resolved_call, _ = open_calls.popleft()
+                    bound_call_content_ids.discard(id(resolved_call))
+                continue
+            if (
+                content.type != "function_approval_request"
+                or content.id is None
+                or content.id not in pending_approval_ids
+                or content.id in bound_approval_ids
+                or content.function_call is None
+                or content.function_call.call_id is None
+            ):
+                continue
+            bound_approval_ids.add(content.id)
+            open_calls = open_calls_by_id.get(content.function_call.call_id)
+            bound_call = next(
+                (call for call in open_calls or () if id(call[0]) not in bound_call_content_ids),
+                None,
+            )
+            if bound_call is None:
+                call_batch_message_indices.add(message_index)
+            else:
+                bound_call_content_ids.add(id(bound_call[0]))
+                call_batch_message_indices.add(bound_call[1])
+
+    unanswered_call_content_ids = {
+        id(function_call) for open_calls in open_calls_by_id.values() for function_call, _ in open_calls
+    }
+    fully_pending_call_message_indices: set[int] = set()
+    for message_index in call_batch_message_indices:
+        call_contents = [
+            content
+            for content in messages[message_index].contents
+            if content.type in {"function_call", "mcp_server_tool_call"}
+        ]
+        if call_contents and all(
+            id(content) in unanswered_call_content_ids or content.call_id in pending_call_ids
+            for content in call_contents
+        ):
+            fully_pending_call_message_indices.add(message_index)
+
+    for call_message_index in tuple(fully_pending_call_message_indices):
+        reasoning_index = call_message_index - 1
+        while (
+            reasoning_index >= 0
+            and messages[reasoning_index].role == "assistant"
+            and messages[reasoning_index].contents
+            and all(content.type == "text_reasoning" for content in messages[reasoning_index].contents)
+        ):
+            fully_pending_call_message_indices.add(reasoning_index)
+            reasoning_index -= 1
+
+    filtered_messages: list[Message] = []
+    for message_index, message in enumerate(messages):
+        filtered_contents = [
+            content
+            for content in message.contents
+            if not (
+                (content.type == "function_approval_request" and content.id in pending_approval_ids)
+                or (
+                    message_index in call_batch_message_indices
+                    and (
+                        (content.type == "function_call" and id(content) in unanswered_call_content_ids)
+                        or (content.type == "mcp_server_tool_call" and content.call_id in pending_call_ids)
+                    )
+                )
+                or (message_index in fully_pending_call_message_indices and content.type == "text_reasoning")
+            )
+        ]
+        if not filtered_contents:
+            continue
+        message.contents = filtered_contents
+        filtered_messages.append(message)
+    messages[:] = filtered_messages
+
+
 def _is_approval_placeholder_result(content: Content) -> bool:
     """Whether a function_result is the stand-in emitted while approval is pending."""
     result = getattr(content, "result", None)
@@ -2464,11 +2602,38 @@ class _FunctionProcessingResult:
     errors_in_a_row: int
     action: Literal["return", "continue", "stop"] = "continue"
     function_call_count: int = 0
-    response_message: Message | None = None
-    streaming_update: ChatResponseUpdate | None = None
+    response_messages: tuple[Message, ...] = ()
+    streaming_updates: tuple[ChatResponseUpdate, ...] = ()
 
 
 _FunctionCallExecutor: TypeAlias = Callable[..., Awaitable[_FunctionExecutionBatch]]
+
+
+def _messages_and_updates_for_terminal_contents(
+    contents: Sequence[Content],
+) -> tuple[tuple[Message, ...], tuple[ChatResponseUpdate, ...]]:
+    from ._types import ChatResponseUpdate, Message
+
+    messages: list[Message] = []
+    updates: list[ChatResponseUpdate] = []
+    current_role: Literal["assistant", "tool"] | None = None
+    current_contents: list[Content] = []
+
+    for content in contents:
+        role: Literal["assistant", "tool"] = (
+            "assistant" if content.type == "function_call" or content.user_input_request else "tool"
+        )
+        if current_role is not None and role != current_role:
+            messages.append(Message(role=current_role, contents=current_contents))
+            updates.append(ChatResponseUpdate(role=current_role, contents=current_contents))
+            current_contents = []
+        current_role = role
+        current_contents.append(content)
+
+    if current_role is not None:
+        messages.append(Message(role=current_role, contents=current_contents))
+        updates.append(ChatResponseUpdate(role=current_role, contents=current_contents))
+    return tuple(messages), tuple(updates)
 
 
 def _handle_function_call_results(
@@ -2508,7 +2673,7 @@ def _handle_function_call_results(
             errors_in_a_row=errors_in_a_row,
             action="return",
             function_call_count=function_call_count,
-            streaming_update=ChatResponseUpdate(contents=streaming_items, role="assistant"),
+            streaming_updates=(ChatResponseUpdate(contents=streaming_items, role="assistant"),),
         )
 
     errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
@@ -2524,7 +2689,7 @@ def _handle_function_call_results(
         errors_in_a_row=errors_in_a_row,
         action="stop" if reached_error_limit else "continue",
         function_call_count=function_call_count,
-        streaming_update=ChatResponseUpdate(contents=execution_results, role="tool"),
+        streaming_updates=(ChatResponseUpdate(contents=execution_results, role="tool"),),
     )
 
 
@@ -2538,7 +2703,7 @@ async def _resolve_approval_responses(
     invocation_session: AgentSession | None = None,
 ) -> _FunctionProcessingResult:
     """Resolve inbound approval responses before the next model call."""
-    from ._types import ChatResponseUpdate, Message
+    from ._types import Message
 
     explicit_approval_response_ids = {
         content.id
@@ -2554,6 +2719,7 @@ async def _resolve_approval_responses(
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
     pending_approval_responses = _collect_approval_responses(prepared_messages)
     if not pending_approval_responses:
+        _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
@@ -2577,17 +2743,14 @@ async def _resolve_approval_responses(
         pending_approval_responses,
         execution_result_groups,
     )
+    pending_requests = _collect_unanswered_approval_requests(prepared_messages)
+    if pending_requests:
+        terminal_contents.extend(_approval_request_replay_contents(pending_requests))
     executed_function_count = len(execution_result_groups)
     requires_user_input = any(
         result.type == "function_call" or result.user_input_request for result in terminal_contents
     )
-    response_role: Literal["assistant", "tool"] | None = None
-    if terminal_contents:
-        response_role = "assistant" if requires_user_input else "tool"
-    terminal_message = Message(role=response_role, contents=terminal_contents) if response_role else None
-    streaming_update = (
-        ChatResponseUpdate(contents=terminal_contents, role=response_role) if response_role is not None else None
-    )
+    response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(terminal_contents)
     action: Literal["return", "continue", "stop"] = "continue"
     if should_terminate or requires_user_input:
         action = "return"
@@ -2597,8 +2760,8 @@ async def _resolve_approval_responses(
         errors_in_a_row=errors_in_a_row,
         action=action,
         function_call_count=executed_function_count,
-        response_message=terminal_message,
-        streaming_update=streaming_update,
+        response_messages=response_messages,
+        streaming_updates=streaming_updates,
     )
 
 
@@ -2717,8 +2880,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
         )
-        if approval_processing.response_message is not None:
-            function_call_messages.append(approval_processing.response_message)
+        function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
             budget_state,
@@ -2849,8 +3011,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             total_function_calls,
             approval_processing.function_call_count,
         )
-        if approval_processing.streaming_update is not None:
-            yield approval_processing.streaming_update
+        for update in approval_processing.streaming_updates:
+            yield update
         if approval_processing.action == "return":
             return
         if approval_processing.action == "stop":
@@ -2920,8 +3082,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls,
                 function_processing.function_call_count,
             )
-            if function_processing.streaming_update is not None:
-                yield function_processing.streaming_update
+            for update in function_processing.streaming_updates:
+                yield update
             if function_processing.action == "stop":
                 options["tool_choice"] = "none"
             elif function_processing.action != "continue":
