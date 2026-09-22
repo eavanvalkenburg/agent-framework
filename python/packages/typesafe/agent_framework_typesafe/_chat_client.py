@@ -413,10 +413,18 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                     f"TypeSafe function results support text items only; received unsupported {item.type!r} content."
                 )
             items.append({"type": "text", "text": item.text or ""})
+        if items:
+            result = "\n".join(item["text"] for item in items)
+        elif isinstance(content.result, str):
+            result = content.result
+        else:
+            raise ChatClientInvalidRequestException(
+                "TypeSafe function results require canonical text items or a string result."
+            )
         return {
             "type": "function_result",
             "call_id": content.call_id,
-            "result": content.result,
+            "result": result,
             **({"items": items} if items else {}),
         }
 

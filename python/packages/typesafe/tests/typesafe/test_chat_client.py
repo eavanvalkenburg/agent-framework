@@ -341,6 +341,37 @@ def test_text_function_result_items_are_serialized() -> None:
     }
 
 
+def test_function_result_uses_canonical_items_over_stale_result() -> None:
+    result = Content(
+        "function_result",
+        call_id="call-1",
+        result="",
+        items=[Content.from_text("canonical")],
+    )
+
+    state = RawTypeSafeChatClient._build_state(  # pyright: ignore[reportPrivateUsage]
+        [Message("user", ["run"]), Message("tool", [result])],
+        instructions=None,
+    )
+
+    assert state["messages"][1]["contents"][0] == {
+        "type": "function_result",
+        "call_id": "call-1",
+        "result": "canonical",
+        "items": [{"type": "text", "text": "canonical"}],
+    }
+
+
+def test_function_result_without_canonical_text_is_rejected() -> None:
+    result = Content("function_result", call_id="call-1", result={"value": 1})
+
+    with pytest.raises(ChatClientInvalidRequestException, match="canonical text items or a string result"):
+        RawTypeSafeChatClient._build_state(  # pyright: ignore[reportPrivateUsage]
+            [Message("user", ["run"]), Message("tool", [result])],
+            instructions=None,
+        )
+
+
 def test_simple_mcp_result_wrapper_is_unwrapped() -> None:
     result = RawTypeSafeChatClient._get_current_turn_function_result_texts(  # pyright: ignore[reportPrivateUsage]
         [
