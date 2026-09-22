@@ -345,7 +345,7 @@ def test_function_result_uses_canonical_items_over_stale_result() -> None:
     result = Content(
         "function_result",
         call_id="call-1",
-        result="",
+        result="stale",
         items=[Content.from_text("canonical")],
     )
 
@@ -360,6 +360,22 @@ def test_function_result_uses_canonical_items_over_stale_result() -> None:
         "result": "canonical",
         "items": [{"type": "text", "text": "canonical"}],
     }
+
+
+def test_terminal_text_uses_canonical_function_result_items() -> None:
+    result = Content(
+        "function_result",
+        call_id="call-1",
+        result="stale",
+        items=[Content.from_text("canonical")],
+    )
+
+    text = RawTypeSafeChatClient._build_terminal_text(  # pyright: ignore[reportPrivateUsage]
+        [Message("user", ["run"]), Message("tool", [result])],
+        make_response(),
+    )
+
+    assert text == "canonical"
 
 
 def test_function_result_without_canonical_text_is_rejected() -> None:

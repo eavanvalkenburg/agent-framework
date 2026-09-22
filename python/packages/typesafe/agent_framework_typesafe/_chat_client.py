@@ -462,8 +462,15 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             if message.role == "user":
                 break
             for content in reversed(message.contents):
-                if content.type == "function_result" and isinstance(content.result, str):
-                    results.append(RawTypeSafeChatClient._unwrap_function_result_text(content.result))
+                if content.type != "function_result":
+                    continue
+                if content.items:
+                    result = "\n".join(item.text or "" for item in content.items if item.type == "text")
+                elif isinstance(content.result, str):
+                    result = content.result
+                else:
+                    continue
+                results.append(RawTypeSafeChatClient._unwrap_function_result_text(result))
         results.reverse()
         return results
 
