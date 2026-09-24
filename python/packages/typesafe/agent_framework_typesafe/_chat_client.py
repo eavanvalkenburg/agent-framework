@@ -455,10 +455,18 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                     f"TypeSafe function results support text items only; received unsupported {item.type!r} content."
                 )
             items.append({"type": "text", "text": item.text or ""})
+        if items:
+            result = "\n".join(item["text"] for item in items)
+        elif isinstance(content.result, str):
+            result = content.result
+        else:
+            raise ChatClientInvalidRequestException(
+                "TypeSafe function results require canonical text items or a string result."
+            )
         return {
             "type": "function_result",
             "call_id": content.call_id,
-            "result": content.result,
+            "result": result,
             **({"items": items} if items else {}),
         }
 
@@ -516,8 +524,15 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             if message.role == "user":
                 break
             for content in reversed(message.contents):
-                if content.type == "function_result" and isinstance(content.result, str):
-                    results.append(RawTypeSafeChatClient._unwrap_function_result_text(content.result))
+                if content.type != "function_result":
+                    continue
+                if content.items:
+                    result = "\n".join(item.text or "" for item in content.items if item.type == "text")
+                elif isinstance(content.result, str):
+                    result = content.result
+                else:
+                    continue
+                results.append(RawTypeSafeChatClient._unwrap_function_result_text(result))
         results.reverse()
         return results
 

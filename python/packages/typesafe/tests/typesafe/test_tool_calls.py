@@ -184,6 +184,27 @@ def test_routable_tool_limit_is_enforced() -> None:
         compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
 
 
+def test_routable_tool_limit_stops_compiling_later_tools() -> None:
+    class CountingFunctionTool(FunctionTool):
+        compiled_count = 0
+
+        def parameters(self) -> dict[str, Any]:
+            type(self).compiled_count += 1
+            if type(self).compiled_count > MAX_ROUTABLE_TOOLS + 1:
+                raise AssertionError("tool compilation continued after the routable limit")
+            return super().parameters()
+
+    tools = [
+        CountingFunctionTool(name=f"tool_{index}", func=lambda: None, input_model={})
+        for index in range(MAX_ROUTABLE_TOOLS + 2)
+    ]
+
+    with pytest.raises(ChatClientInvalidRequestException, match="at most"):
+        compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
+
+    assert CountingFunctionTool.compiled_count == MAX_ROUTABLE_TOOLS + 1
+
+
 def test_tool_property_limit_is_enforced_before_compilation() -> None:
     properties = {f"field_{index}": {"type": "boolean"} for index in range(MAX_TOOL_PROPERTIES + 1)}
 

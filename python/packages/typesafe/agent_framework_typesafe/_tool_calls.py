@@ -163,11 +163,25 @@ def compile_tool_call_plan(
 
     compiled: list[_CompiledTool] = []
     unsupported: dict[str, str] = {}
+    compiled_question_count = 0
     for index, tool in enumerate(selected_tools):
         try:
-            compiled.append(_compile_tool(tool, index, list((previous_calls or {}).get(tool.name, ()))))
+            compiled_tool = _compile_tool(tool, index, list((previous_calls or {}).get(tool.name, ())))
         except _UnsupportedToolSchema as exc:
             unsupported[tool.name] = str(exc)
+            continue
+        compiled.append(compiled_tool)
+        if len(compiled) > MAX_ROUTABLE_TOOLS:
+            raise ChatClientInvalidRequestException(
+                f"TypeSafe supports at most {MAX_ROUTABLE_TOOLS} routable tools per request. "
+                "Use tool_choice.allowed_tools to narrow MCP or local tools."
+            )
+        compiled_question_count += len(compiled_tool.questions)
+        if compiled_question_count > MAX_INTERNAL_QUESTIONS:
+            raise ChatClientInvalidRequestException(
+                f"TypeSafe tool schemas generated more than {MAX_INTERNAL_QUESTIONS} internal questions. "
+                "Narrow the available tools."
+            )
 
     if unsupported:
         for name, reason in unsupported.items():
@@ -181,11 +195,6 @@ def compile_tool_call_plan(
 
     if not compiled:
         return None
-    if len(compiled) > MAX_ROUTABLE_TOOLS:
-        raise ChatClientInvalidRequestException(
-            f"TypeSafe supports at most {MAX_ROUTABLE_TOOLS} routable tools per request. "
-            "Use tool_choice.allowed_tools to narrow MCP or local tools."
-        )
 
     required_tool = compiled[0] if mode == "required" and len(compiled) == 1 else None
     route_question_id: str | None = None
