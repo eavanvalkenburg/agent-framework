@@ -1,76 +1,89 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Read only explicitly uploaded files from this Foundry hosted session."""
+
 import asyncio
 import os
+import stat
+from pathlib import Path
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 
-@tool(description="Get the current working directory.", approval_mode="never_require")
-def get_cwd() -> str:
-    """Get the current working directory."""
+def _files_root() -> Path:
+    """Use the session's dedicated upload folder, not the container working directory."""
+    return Path.home() / "sample_files"
+
+
+def _open_files_root() -> tuple[int, int]:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_only = getattr(os, "O_DIRECTORY", None)
+    if not isinstance(no_follow, int) or not isinstance(directory_only, int):
+        raise RuntimeError("Secure session-file reading requires directory and no-follow open support.")
+    return os.open(_files_root(), os.O_RDONLY | directory_only | no_follow), no_follow
+
+
+@tool(description="List files in the current session's sample_files directory.", approval_mode="never_require")
+def list_files() -> list[str]:
+    """List only regular files in the sample's scoped upload directory."""
+    if not _files_root().exists():
+        return []
+    directory, _ = _open_files_root()
     try:
-        return os.getcwd()
-    except Exception as e:
-        return f"Error getting current working directory: {e}"
+        with os.scandir(directory) as entries:
+            return sorted(entry.name for entry in entries if entry.is_file(follow_symlinks=False))
+    finally:
+        os.close(directory)
 
 
-@tool(description="List files in a directory.", approval_mode="never_require")
-def list_files(directory: str) -> list[str]:
-    """List files in a directory."""
+@tool(description="Read one named file from this session's sample_files directory.", approval_mode="never_require")
+def read_file(filename: str) -> str:
+    """Reject directory traversal, symlinks, and unexpectedly large files."""
+    if not filename or filename in (".", "..") or Path(filename).name != filename:
+        raise ValueError("filename must be a single file name in sample_files.")
+    directory, no_follow = _open_files_root()
     try:
-        return os.listdir(directory)
-    except Exception as e:
-        return [f"Error listing files in {directory}: {e}"]
+        descriptor = os.open(filename, os.O_RDONLY | no_follow, dir_fd=directory)
+    except OSError as exc:
+        raise ValueError("filename must refer to a regular file in sample_files.") from exc
+    finally:
+        os.close(directory)
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise ValueError("filename must refer to a regular file in sample_files.")
+        data = file.read(1_000_001)
+    if len(data) > 1_000_000:
+        raise ValueError("Only regular UTF-8 files of at most 1 MB can be read.")
+    return data.decode("utf-8")
 
 
-@tool(description="Read the contents of a file.", approval_mode="never_require")
-def read_file(file_path: str) -> str:
-    """Read the contents of a file."""
-    try:
-        with open(file_path) as f:
-            return f.read()
-    except Exception as e:
-        return f"Error reading file {file_path}: {e}"
-
-
-async def main():
+def create_agent() -> Agent:
+    """Keep the Toolbox's MCP connection within one request's caller context."""
     credential = DefaultAzureCredential()
-
-    # FoundryToolbox resolves the toolbox endpoint from the environment
-    # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME), authenticates
-    # every request with the credential, and transparently forwards the platform
-    # per-request call-id to the toolbox. The hosting server enters the agent, which
-    # connects the toolbox on first use and closes it at shutdown.
     toolbox = FoundryToolbox(credential)
-
-    # Create the chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=credential,
     )
-
-    agent = Agent(
+    return Agent(
         client=client,
         instructions=(
-            "You are a friendly assistant. Keep your answers brief. "
-            "Make sure all mathematical calculations are performed using the code interpreter "
-            "instead of mental arithmetic."
+            "You are a helpful assistant. Use list_files and read_file only for files in sample_files. "
+            "Use the code interpreter for calculations."
         ),
-        tools=[get_cwd, list_files, read_file, toolbox],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
+        tools=[list_files, read_file, toolbox],
     )
-    server = ResponsesHostServer(agent)
+
+
+async def main() -> None:
+    server = ResponsesHostServer(agent=create_agent, inner_history="host")
     await server.run_async()
 
 

@@ -1,8 +1,8 @@
 # What this sample demonstrates
 
-A realistic **multi-turn** [Agent Framework](https://github.com/microsoft/agent-framework) **declarative workflow** — defined entirely in YAML — hosted using the **Responses protocol**. It shows how a declarative workflow that invokes multiple Foundry-hosted agents can run end-to-end on every user turn while reading the prior conversation through `Conversation.messages` (populated automatically by `Workflow.as_agent()`).
+A realistic **multi-turn** [Agent Framework](https://github.com/microsoft/agent-framework) **declarative workflow** — defined entirely in YAML — hosted using the **Responses protocol**. The host runs the native workflow without `Workflow.as_agent()`.
 
-> Read more about declarative workflows in the [Agent Framework documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/declarative/?pivots=programming-language-python) and about workflow-as-an-agent in the [Workflow as an Agent documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/as-agents?pivots=programming-language-python).
+Read more about declarative workflows in the [Agent Framework documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/declarative/?pivots=programming-language-python).
 
 ## How It Works
 
@@ -17,13 +17,14 @@ A realistic **multi-turn** [Agent Framework](https://github.com/microsoft/agent-
    - **Category = "Billing"** → same pattern, routed to `BillingAgent`.
    - **else** → `SendActivity` returns the triage agent's `Reply` directly (good for greetings or general questions).
 
-Each user message re-runs the workflow from the trigger. Because `Workflow.as_agent()` populates `Conversation.messages` with the prior turns of the conversation, every `InvokeAzureAgent` call sees the full history — which is what makes the triage decision and the specialist follow-ups coherent across turns.
+The required `parse_response` callback passes only the **current turn's** `list[Message]` to the workflow. On continuation, the host restores the scoped checkpoint first; prior `Conversation.messages` is already present in workflow state. Feeding the entire Responses transcript again would duplicate earlier turns and possibly tool results. The workflow updates its conversation state as it runs.
 
 ### Agent Hosting
 
-[`main.py`](main.py) gives `ResponsesHostServer` a callable that builds three `Agent` instances on top of a shared
-`FoundryChatClient`, registers them with `WorkflowFactory`, loads the workflow, and wraps it with `.as_agent(...)`.
-Each request receives a fresh workflow and agents, while the host restores the supported session and checkpoint state.
+[`main.py`](main.py) gives `ResponsesHostServer` a request-aware callable that builds three `Agent` instances on top of
+a shared `FoundryChatClient`, registers them with `WorkflowFactory`, and returns a **built** `Workflow`. Each request
+receives a fresh workflow and agents. The host binds its checkpoint to the trusted Foundry `agent_session_id` and
+the caller's response/conversation lineage; this is not the model service's conversation ID.
 
 The triage agent is configured with `response_format=TriageResponse` (a Pydantic model) so the workflow can read its structured fields via `Local.Triage.*`. The specialist agents are plain text and use `autoSend: true` to deliver their reply straight to the caller.
 

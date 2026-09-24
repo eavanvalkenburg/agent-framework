@@ -4,8 +4,9 @@ import os
 from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.monty import MontyCodeActProvider
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -77,13 +78,9 @@ def main() -> None:
             "task requires lookups, transformations, or computation."
         ),
         context_providers=[codeact],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+    server = ResponsesHostServer(agent=agent, inner_history="host")
     server.run()
 
 

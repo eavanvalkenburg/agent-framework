@@ -15,17 +15,29 @@ instance and authentication context.
 """
 
 import asyncio
+import hashlib
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.core import get_request_context
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-async def main() -> None:
+def create_agent() -> Agent:
+    """Scope memory to the trusted Foundry user, across that user's sessions."""
+    platform_context = get_request_context()
+    if platform_context.user_id:
+        scope = hashlib.sha256(f"memory-user:{platform_context.user_id}".encode()).hexdigest()
+    elif platform_context.call_id:
+        raise RuntimeError("A hosted request cannot access memory without a trusted user ID.")
+    else:
+        scope = "local-user"
+
     # The chat client owns the AIProjectClient. ``allow_preview=True`` is required
     # so the same client can call the preview ``beta.memory_stores`` API used by
     # FoundryMemoryProvider.
@@ -41,14 +53,10 @@ async def main() -> None:
     memory_provider = FoundryMemoryProvider(
         project_client=client.project_client,
         memory_store_name=os.environ["MEMORY_STORE_NAME"],
-        # Scope memories by user id, so each user that interacts with the agent
-        # has their own isolated memories in the store (assuming those users are
-        # granted access). `{{userId}}` is a special placeholder that the hosting
-        # infrastructure will replace with the actual user id at runtime.
-        scope="{{$userId}}",
+        scope=scope,
     )
 
-    agent = Agent(
+    return Agent(
         client=client,
         instructions=(
             "You are a helpful assistant that remembers facts the user has shared "
@@ -57,12 +65,11 @@ async def main() -> None:
             "answering, and acknowledge when you are relying on remembered facts."
         ),
         context_providers=[memory_provider],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
-    server = ResponsesHostServer(agent)
+
+
+async def main() -> None:
+    server = ResponsesHostServer(agent=create_agent, inner_history="host")
     await server.run_async()
 
 

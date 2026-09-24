@@ -1,127 +1,62 @@
-# What this sample demonstrates
+# Responses: files in a hosted session
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent that uses a local shell tool and a code interpreter tool for working with files, and hosted using the **Responses protocol**.
+[`main.py`](main.py) hosts an agent with two local tools and a Foundry Toolbox code interpreter. `list_files()` lists
+regular files in the sample's dedicated directory; `read_file(filename)` accepts only a single file name, rejects
+traversal and symlinks, and reads at most 1 MB of UTF-8 text. Neither tool accepts an arbitrary filesystem path.
+The Toolbox's own container files and citations are **not** the same resource as this agent's session files.
 
-## How It Works
+The tools use `$HOME/sample_files/`: on Foundry this is inside the current hosted session's sandbox. They do not
+switch to the repository directory when a request lacks an environment variable. Locally, `$HOME` is shared by
+your own runs rather than isolated by the platform. File and directory opens refuse symlinks without a
+time-of-check/time-of-use gap; the sample requires POSIX `O_NOFOLLOW` and `O_DIRECTORY` support and fails closed
+without them.
+The Foundry `agent_session_id` owns that sandbox and its files; `AgentSession.session_id`, `conversation.id`, and
+`response.id` serve other purposes. Local runs do not prove the platform's user-isolation guarantee.
 
-### Model Integration
+The host creates an agent and Toolbox connection for each request so the connection cannot retain a previous
+request's Foundry call ID. It uses `inner_history="host"`: stored outer Responses history is supplied to the
+inner agent, which does not also store its model-side history.
 
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. The agent supports both streaming (SSE events) and non-streaming (JSON) response modes.
+## Running locally
 
-See [main.py](main.py) for the full implementation.
-
-### Agent Hosting
-
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-
-### Tools
-
-This agent uses four tools:
-
-1. **Get Current Working Directory Tool (`get_cwd`)** – Returns the current working directory of the agent host process.
-2. **List Files Tool (`list_files`)** – Lists the files in a specified directory.
-3. **Read File Tool (`read_file`)** – Reads the contents of a specified file.
-4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe sandboxed environment.
-5. **Web Search Tool (`web_search`)** – Allows the agent to perform web searches using the Bing Search API.
-
-> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool and web search tool are managed tools provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../foundry_toolbox/).
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-An extra environment variable must be set to point to the toolbox MCP endpoint. You can provide it in one of two ways:
-
-**Option A – Set `FOUNDRY_TOOLBOX_ENDPOINT` directly** (recommended for local development):
+Follow the [parent hosting guide](../../README.md) to configure `FOUNDRY_PROJECT_ENDPOINT` and
+`AZURE_AI_MODEL_DEPLOYMENT_NAME`, then run `python main.py`. If the Toolbox is configured with a named endpoint,
+also set `TOOLBOX_NAME` or `FOUNDRY_TOOLBOX_ENDPOINT`. The local `resources/` directory includes a sample report;
+copy it into your local sample folder before invoking the file tools:
 
 ```bash
-export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
+mkdir -p "$HOME/sample_files"
+cp resources/contoso_q1_2026_report.txt "$HOME/sample_files/"
 ```
-
-Or in PowerShell:
-
-```powershell
-$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
-```
-
-**Option B – Set `TOOLBOX_NAME`** (used automatically by the Foundry hosting scaffolding after `azd provision`):
-
-The agent derives the endpoint at runtime as:
-```
-{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1
-```
-
-When deployed via `azd provision`, the scaffolding injects `TOOLBOX_NAME=agent-tools` and `FOUNDRY_PROJECT_ENDPOINT` automatically from the provisioned resources declared in [`agent.manifest.yaml`](agent.manifest.yaml).
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
-
-Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Find the quarterly report under `{cwd}/resources` and tell me the difference of revenue between q1 2026 and q1 2025?"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "List the sample files and summarize the quarterly report.", "store": true}'
 ```
 
-> When ruuning locally, it runs within the project directory, which contains the entire sample, so the `{cwd}/resources` path in the query above will allow the agent to locate the `resources` folder included with this sample and read the `contoso_q1_2026_report.txt` file from that folder.
+## Uploading to a deployed Foundry session
 
-The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
-
-## Deploying the Agent to Foundry
-
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
-
-## Uploading a file to a session
-
-Deploying the agent won't automatically upload the files included with this sample to Foundry. To make these files available to the agent at runtime, you must upload them to a [hosted agent session](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions). Files are tied to a specific hosted agent session, so each time you start a new session you will need to upload the files again if the agent needs access to them during that session.
-
-After you deploy the agent to Foundry, you have two ways to interact with the agent:
-
-1. Using `azd ai agent invoke`.
-2. Through the Foundry portal.
-
-### Using `azd ai agent invoke`
-
-After successfully deploying the agent to Foundry, run the following command:
-
-> You must remain in the directory where your `azd` project is initialized so that the CLI can locate the deployed agent configuration.
+A file must be uploaded to the **same** Foundry `agent_session_id` that subsequent invocations use. Run
+[`upload_file.py`](upload_file.py) after creating a hosted session or receiving an ID from the first response:
 
 ```bash
-azd ai agent invoke "Hi!"
+python upload_file.py REPLACE_WITH_AGENT_SESSION_ID resources/contoso_q1_2026_report.txt
 ```
 
-The command will invoke the agent and the server will create a new session if one does not already exist for this interaction, returning the agent's response from the hosted agent session. Run the following if you want to force a new session:
+The script uses the [Session Files API](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-sessions#session-file-operations)
+to place the file at `sample_files/contoso_q1_2026_report.txt`. It needs `FOUNDRY_PROJECT_ENDPOINT`,
+`FOUNDRY_AGENT_NAME`, and an authenticated Azure CLI session. When invoking the hosted agent again, pass the
+returned `agent_session_id` in the Responses body (or use a `conversation` that Foundry has already bound to it):
+
+A deployed Foundry test confirmed that an upload at `sample_files/hosting-canary.txt` is readable through
+`$HOME/sample_files/` in its hosted session, and is absent from a second hosted session.
 
 ```bash
-azd ai agent invoke --new-session "Hi!"
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "Read contoso_q1_2026_report.txt.", "agent_session_id": "REPLACE_WITH_AGENT_SESSION_ID", "store": true}'
 ```
 
-Run the following command to upload a file to the hosted agent session:
-
-```bash
-azd ai agent files upload -f <path-to-contoso_q1_2026_report.txt>
-```
-
-> The above command will automatically detect the last active session and upload the file to that session without requiring you to explicitly provide a session ID. It is also possible to specify a particular session ID to upload the file to a specific hosted agent session by using the `--session-id` flag. Run `azd ai agent files upload -h` to see the full list of options and flags available for the `upload` command.
-
-Once the file is uploaded to the hosted agent session, the agent will be able to access it during that session and use it to respond to queries that reference the uploaded file.
-
-Invoke the agent again with a query that references the uploaded file to see how it can now use the file in its responses. For example:
-
-```bash
-azd ai agent invoke "Find the quarterly report under the home directory and tell me the difference of revenue between q1 2026 and q1 2025?"
-```
-
-### Using the Foundry Portal
-
-Similar to using the `azd` CLI, you must invoke the agent first to create a session:
-
-![alt text](./resources/start-a-session.png)
-
-Once the session is created, you can grab the session ID and use `azd ai agent files upload --session-id <session-id>` to upload files to that specific hosted agent session.
-
-![alt text](./resources/session-started.png)
-
-Or you can upload files directly through the Foundry portal by navigating to Files tab in the agent playground:
-
-![alt text](./resources/file-upload-portal.png)
+`previous_response_id` alone continues conversation history but does **not** route to the original file sandbox.
+Other callers must not gain access to files by supplying someone else's session ID. See the [Foundry session
+isolation guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/isolate-sessions-per-user) for the
+platform boundary; application-owned external stores and tools must enforce their own scope.

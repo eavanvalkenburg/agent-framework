@@ -5,8 +5,9 @@ import os
 from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.hyperlight import HyperlightCodeActProvider
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -70,17 +71,15 @@ def main():
         approval_mode="never_require",
     )
 
-    # 3. Build the agent. History is managed by the hosting infrastructure, so
-    #    request the model not to persist server-side conversation state.
+    # 3. Build the agent. The host owns Responses history and keeps the model stateless.
     agent = Agent(
         client=client,
         instructions="You are a helpful assistant. Keep your answers brief.",
         context_providers=[codeact],
-        default_options={"store": False},
     )
 
     # 4. Serve the agent over the Foundry Responses protocol.
-    server = ResponsesHostServer(agent)
+    server = ResponsesHostServer(agent=agent, inner_history="host")
     server.run()
 
 

@@ -14,9 +14,13 @@ See [main.py](main.py) for the full implementation.
 
 Local tools are Python functions decorated with the Agent Framework's `@tool` decorator and registered with the agent. When the model chooses to call a tool during a conversation, the agent executes the corresponding function and returns the result to the model.
 
-Each tool can be configured with one of two approval modes: **always_require** or **never_require**. With **always_require**, the agent requests explicit user approval before every invocation; with **never_require**, the agent invokes the tool automatically. To illustrate both behaviors, this sample defines two tools—one using `always_require` and the other using `never_require`.
+`get_weather` is read-only and does not require approval. `save_forecast` simulates a write and requires approval; it
+does not execute a shell command or change an external service.
 
-When a tool is set to `always_require`, the agent host emits an `mcp_approval_request` output containing the approval request ID and details of the pending tool call. The client must reply with an `mcp_approval_response` indicating the same request ID and whether the user approved or denied the call before the agent will proceed.
+When `save_forecast` is called, the agent host emits an `mcp_approval_request` containing an approval request ID.
+The client replies with an `mcp_approval_response` using that ID and the same Foundry session, after the host has
+stored the original response. Cross-turn approval requires `store=true`; the pending request and agent state are
+bound to the trusted user, sandbox, and response lineage.
 
 > IMPORTANT: We are temporarily reusing the **mcp_approval_request** and **mcp_approval_response** message types defined in the [AzureAI AgentServer SDK](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-responses/docs/handler-implementation-guide.md#other-tool-call-types) because they map closely to this approval flow. They will likely be superseded by a more formal tool-approval content type in the Responses protocol in the future.
 
@@ -35,25 +39,22 @@ Follow the instructions in the [Running the Agent Host Locally](../../README.md#
 Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "What is the weather in Seattle?"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "What is the weather in Seattle?", "store": true}'
 ```
 
 Send a POST request that triggers a tool call configured with `always_require` to see the approval flow in action:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "List all the files in the current directory."}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "Save a forecast for Seattle.", "store": true}'
 ```
 
-Sample output:
+The output includes a caller-facing `response.id`, `agent_session_id`, and an `mcp_approval_request` ID. To approve:
 
 ```bash
-{"id":"caresp_3b6cba8c972b1d2f00bXmjpUGzfgSFsmgjtlgqUwqvROwl5lyG","object":"response","output":[{"type":"function_call","id":"fc_3b6cba8c972b1d2f00JIAQktGC1upcB6Dgxp1AVVLp0MoyRTX4","call_id":"call_hWwwZ8lqVQCAuo8ZyY4LXIya","name":"run_bash","arguments":"{\"command\":\"ls -la\"}","status":"completed","response_id":"caresp_3b6cba8c972b1d2f00bXmjpUGzfgSFsmgjtlgqUwqvROwl5lyG","agent_reference":null},{"type":"mcp_approval_request","id":"mcpr_3b6cba8c972b1d2f00IdqsjB6iidFmtsuYp6oI1AoAtUKQZxje","server_label":"agent_framework","name":"run_bash","arguments":"{\"command\":\"ls -la\"}","response_id":"caresp_3b6cba8c972b1d2f00bXmjpUGzfgSFsmgjtlgqUwqvROwl5lyG","agent_reference":null}],"created_at":1778021855,"model":"","status":"completed","completed_at":1778021865,"response_id":"caresp_3b6cba8c972b1d2f00bXmjpUGzfgSFsmgjtlgqUwqvROwl5lyG","agent_reference":{"type":"agent_reference"},"agent_session_id":"8caaaa19598306a1f2fb6d8939ef06874c52c63a83b57681ea4e4b75cf6a179","background":false}
-```
-
-To approve:
-
-```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": [{"type": "mcp_approval_response", "approval_request_id": "mcpr_3b6cba8c972b1d2f00IdqsjB6iidFmtsuYp6oI1AoAtUKQZxje", "approve": true}], "previous_response_id": "caresp_3b6cba8c972b1d2f00bXmjpUGzfgSFsmgjtlgqUwqvROwl5lyG"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": [{"type": "mcp_approval_response", "approval_request_id": "REPLACE_WITH_APPROVAL_ID", "approve": true}], "previous_response_id": "REPLACE_WITH_RESPONSE_ID", "agent_session_id": "REPLACE_WITH_AGENT_SESSION_ID", "store": true}'
 ```
 
 ## Deploying the Agent to Foundry

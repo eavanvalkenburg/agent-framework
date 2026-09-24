@@ -4,7 +4,8 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -12,7 +13,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-async def main() -> None:
+def create_agent() -> Agent:
+    """Own the Toolbox connection for the request that created this agent."""
     credential = DefaultAzureCredential()
 
     # FoundryToolbox resolves the toolbox endpoint from the environment
@@ -28,7 +30,7 @@ async def main() -> None:
     # fetched on demand via resources/read. disable_load_skill_approval=True registers
     # the load_skill tool with approval_mode="never_require" so this unattended agent
     # can load skills without an approval round-trip -- the Responses host runs the
-    # agent without an AgentSession, which the default approval flow requires.
+    # agent without an interactive approval step in this sample.
     skills_provider = toolbox.as_skills_provider(disable_load_skill_approval=True)
 
     client = FoundryChatClient(
@@ -37,19 +39,17 @@ async def main() -> None:
         credential=credential,
     )
 
-    agent = Agent(
+    return Agent(
         client=client,
         name=os.environ.get("AGENT_NAME", "hosted-toolbox-mcp-skills"),
         instructions="You are a helpful assistant.",
         tools=toolbox,
         context_providers=[skills_provider],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+
+async def main() -> None:
+    server = ResponsesHostServer(agent=create_agent, inner_history="host")
     await server.run_async()
 
 

@@ -16,6 +16,14 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 2. **Searches for contextual memories** matching the current user message and injects them into the model context.
 3. **Updates the store** with new facts inferred from the conversation.
 
+This external memory store is independent of the caller's Responses `store` flag. `store=false` prevents the host
+from storing a response or updated MAF session; it cannot prevent an explicitly configured external context
+provider from updating its own memory. Use this sample only where that persistence is intended.
+The host builds an agent for each request and hashes the **trusted platform user ID** into the memory scope.
+`FoundryMemoryProvider` forwards its `scope` literally, so `{{$userId}}` is not a substitute for this
+request-time binding. Memories intentionally persist across hosted sessions for the same user, not across users.
+Local runs use a single-user `local-user` scope and do not prove hosted identity isolation.
+
 Crucially, the provider is constructed with `project_client=client.project_client` — i.e. it reuses the `AIProjectClient` that `FoundryChatClient` already created, instead of allocating a second one. This keeps a single authentication context and connection pool for both chat and memory operations.
 
 See [main.py](main.py) for the full implementation.
@@ -33,7 +41,9 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ### Required RBAC
 
-Your identity (or the Managed Identity running the container in production) needs **Azure AI User** on the Foundry project scope. This single role covers both provisioning the memory store with `provision_memory_store.py` and reading/writing memories from `main.py`.
+Your identity and the hosted agent's Managed Identity need **Foundry User** on the Foundry project scope to
+read and write memories. Without it, model responses can still complete while the memory provider logs
+`agents/read` or `agents/write` permission failures and retains nothing.
 
 ## Provisioning the memory store (one time)
 
@@ -92,16 +102,17 @@ You can also place these in a `.env` file next to `main.py` — see [`.env.examp
 
 Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. The first request seeds a memory; subsequent requests (especially in new sessions) should be able to recall it because memories are persisted across Foundry Hosted Agents sessions.
 
-> In this sample, the memory is scoped to the user by specifying `scope="{{$userId}}"`, thus memories are isolated across different users but shared across different sessions from the same user.
+> The request-scoped factory obtains the platform user ID and hashes it before constructing `FoundryMemoryProvider`;
+> the same user's sessions share memories, while different users cannot read each other's scope.
 
 ```bash
 # 1. Tell the agent something to remember.
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
-  -d '{"input": "I prefer dark roast coffee and I am allergic to nuts."}'
+  -d '{"input": "I prefer dark roast coffee and enjoy reading novels."}'
 
 # Wait a few seconds for the memory to be stored, then start a fresh conversation:
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
-  -d '{"input": "Can you recommend a coffee and a snack for me?"}'
+  -d '{"input": "Can you suggest a coffee for my next reading session?"}'
 
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
   -d '{"input": "What do you remember about my preferences?"}'
@@ -119,4 +130,5 @@ azd env set MEMORY_STORE_NAME "agent_framework_memory"
 
 If these are not set, running `azd ai agent init -m <agent.manifest.yaml>` will prompt you to enter them interactively.
 
-The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to read and write memories at runtime. Make sure you have run `provision_memory_store.py` against the same Foundry project before deploying — otherwise the agent will fail on the first turn when it tries to read from a non-existent store.
+The deployed agent's Managed Identity needs **Foundry User** on the Foundry project to read and write memories.
+Run `provision_memory_store.py` against that same project before deploying.

@@ -4,9 +4,10 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from agent_framework import Agent, WorkflowAgent
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework import Agent, Message, Workflow
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_declarative import WorkflowFactory
+from agent_framework_foundry_hosting import HostedResponseRequest, ResponsesHostServer, WorkflowTurn
 from agent_framework_openai import OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -86,8 +87,8 @@ ask for them one at a time. Keep responses short and polite.
 # --- Host setup ------------------------------------------------------------------
 
 
-def create_workflow_agent(client: FoundryChatClient, workflow_path: Path) -> WorkflowAgent:
-    """Create a fresh declarative workflow agent for one hosted request."""
+def build_workflow(client: FoundryChatClient, workflow_path: Path) -> Workflow:
+    """Create a fresh declarative workflow for one hosted request."""
     # The workflow's InvokeAzureAgent actions reference these agents by name.
     triage_agent = Agent(
         client=client,
@@ -116,19 +117,15 @@ def create_workflow_agent(client: FoundryChatClient, workflow_path: Path) -> Wor
         },
     )
 
-    workflow = factory.create_workflow_from_yaml_path(str(workflow_path))
+    return factory.create_workflow_from_yaml_path(str(workflow_path))
 
-    # Wrap the declarative workflow as an AIAgent so it can be served behind
-    # the Responses protocol. Each user turn re-runs the workflow with the
-    # full conversation history available via Conversation.messages.
-    return workflow.as_agent(
-        name="declarative-customer-support",
-        description=(
-            "A multi-turn customer-support triage workflow that routes "
-            "between technical and billing specialists based on the "
-            "conversation history."
-        ),
-    )
+
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[list[Message]]:
+    """Only this turn's input is needed; prior Conversation.messages is in the checkpoint."""
+    messages = await request.get_input_messages()
+    if not messages:
+        raise ValueError("A customer message is required.")
+    return WorkflowTurn(input=messages)
 
 
 def main() -> None:
@@ -139,7 +136,10 @@ def main() -> None:
         credential=DefaultAzureCredential(),
     )
 
-    ResponsesHostServer(agent=lambda: create_workflow_agent(client, workflow_path)).run()
+    ResponsesHostServer(
+        workflow=lambda request: build_workflow(client, workflow_path),
+        parse_response=parse_response,
+    ).run()
 
 
 if __name__ == "__main__":

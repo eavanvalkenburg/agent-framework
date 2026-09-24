@@ -1,5 +1,8 @@
 # Claw Step 04 — Production-ready
 
+> The `hosted.py` entry point uses the breaking Foundry-hosting API in this worktree; older published betas do not
+> support it. The local console entry point is unaffected.
+
 This folder restructures the Step 03 claw into a shared agent module plus thin hosts. It is also a
 self-contained Foundry deployment package: Foundry uses code (ZIP) deployment for Python hosted
 agents and uploads this folder only.
@@ -93,8 +96,9 @@ The hosted version **disables file access and shell** on the container. In a sha
 
 File memory **stays enabled** when hosted, but its store has to move. The harness writes file memory
 to `{cwd}/agent-file-memory` by default, and the deployed code directory (`/app`) is mounted
-**read-only** on Foundry hosted agents, so the default directory fails. `hosted.py` therefore passes a
-`FileSystemAgentFileStore` rooted at `~/.claw/agent-file-memory`, which is writable.
+**read-only** on Foundry hosted agents. `hosted.py` therefore uses a per-user, per-Foundry-session
+subdirectory under `~/.claw/agent-file-memory/`, selected from trusted platform context. Unlike the
+caller-facing Responses `store` flag, file-memory writes are an explicitly enabled application side effect.
 
 ### Deploy to Foundry
 

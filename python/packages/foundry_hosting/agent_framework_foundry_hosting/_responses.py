@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import inspect
 import ipaddress
 import json
 import logging
 import os
 import re
+import uuid
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -25,7 +28,10 @@ from typing import Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
+    AgentExecutor,
+    AgentResponse,
     AgentResponseUpdate,
+    AgentSession,
     ChatOptions,
     CheckpointStorage,
     Content,
@@ -39,11 +45,13 @@ from agent_framework import (
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
+    WorkflowEvent,
+    WorkflowRunState,
     add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
-from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core import AgentConfig, get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseProviderProtocol,
@@ -84,8 +92,26 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from typing_extensions import Any
 
-from ._agent_source import is_agent, resolve_agent, validate_agent_source
+from ._agent_source import (
+    AgentSource,
+    WorkflowSource,
+    is_agent,
+    resolve_agent,
+    resolve_workflow,
+    validate_agent_source,
+    validate_workflow_source,
+)
 from ._feature_usage import FeatureIndex
+from ._request import (
+    HostedResponseRequest,
+    OptionsHook,
+    UnsupportedOptions,
+    WorkflowTurn,
+    prepare_response_options,
+    response_run_options,
+    validate_unsupported_options,
+)
+from ._scope import FoundryRequestScope
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -94,12 +120,15 @@ from ._state_store import (
     FunctionApprovalStoreProvider,
     StoreProvider,
 )
+from ._workflow_state import FoundryWorkflowBindingStore, WorkflowApproval, WorkflowBinding
 
 logger = logging.getLogger(__name__)
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+_HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
+_HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -139,6 +168,88 @@ def _create_response_event_stream(context: ResponseContext) -> ResponseEventStre
         if persisted_response is not None:
             return ResponseEventStream(response=persisted_response, response_id=context.response_id)
     return ResponseEventStream(response_id=context.response_id)
+
+
+def _workflow_event_updates(event: WorkflowEvent[Any], response_id: str) -> list[AgentResponseUpdate]:
+    """Project public workflow outputs and requests onto the existing Responses content writer."""
+    data = event.data
+    if event.type in ("output", "intermediate"):
+        if isinstance(data, AgentResponseUpdate):
+            return [data]
+        if isinstance(data, AgentResponse):
+            updates = [
+                AgentResponseUpdate(
+                    contents=list(message.contents),
+                    role=message.role,
+                    author_name=message.author_name or event.executor_id,
+                    response_id=response_id,
+                    message_id=message.message_id or uuid.uuid4().hex,
+                )
+                for message in data.messages
+            ]
+            if data.usage_details is not None:
+                updates.append(AgentResponseUpdate(contents=[Content.from_usage(data.usage_details)]))
+            return updates
+        if isinstance(data, Message):
+            return [
+                AgentResponseUpdate(
+                    contents=list(data.contents),
+                    role=data.role,
+                    response_id=response_id,
+                    message_id=data.message_id or uuid.uuid4().hex,
+                )
+            ]
+        if isinstance(data, list):
+            updates: list[AgentResponseUpdate] = []
+            for item in cast(list[Any], data):
+                updates.extend(_workflow_event_updates(WorkflowEvent("output", data=item), response_id))
+            return updates
+        return [
+            AgentResponseUpdate(
+                contents=[data if isinstance(data, Content) else Content.from_text(_json_safe_to_str(data))],
+                role="assistant",
+                response_id=response_id,
+                message_id=uuid.uuid4().hex,
+            )
+        ]
+
+    if event.type != "request_info":
+        return []
+    if not event.request_id:
+        raise ValueError("Workflow request_info event must have a request ID.")
+    if isinstance(data, Content) and data.user_input_request and data.type != "text":
+        content = data
+    else:
+        content = Content.from_function_call(
+            event.request_id,
+            "request_info",
+            arguments={"request_id": event.request_id, "request": _json_safe_to_str(data)},
+        )
+    return [
+        AgentResponseUpdate(
+            contents=[content],
+            role="assistant",
+            response_id=response_id,
+            message_id=uuid.uuid4().hex,
+        )
+    ]
+
+
+def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> list[AgentResponseUpdate]:
+    """Convert a completed inner provider response without exposing its continuation token."""
+    updates = [
+        AgentResponseUpdate(
+            contents=list(message.contents),
+            role=message.role,
+            author_name=message.author_name,
+            response_id=response_id,
+            message_id=message.message_id or uuid.uuid4().hex,
+        )
+        for message in response.messages
+    ]
+    if response.usage_details is not None:
+        updates.append(AgentResponseUpdate(contents=[Content.from_usage(response.usage_details)]))
+    return updates
 
 
 _T = TypeVar("_T")
@@ -426,6 +537,8 @@ def _validate_agent_configuration(
     agent: SupportsAgentRun,
     history_source: Literal["agent_server", "agent"],
     options: ResponsesServerOptions | None,
+    *,
+    inner_background: Literal["host", "provider"] = "host",
 ) -> _AgentConfiguration:
     is_workflow_agent = isinstance(agent, WorkflowAgent)
     if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -435,11 +548,15 @@ def _validate_agent_configuration(
         )
 
     resilient_background = bool(options and options.resilient_background)
-    if resilient_background and not is_workflow_agent:
+    if resilient_background and not is_workflow_agent and inner_background != "provider":
         raise RuntimeError(
             "resilient_background=True is only supported for workflow agents. "
             "Crash recovery cannot be provided for non-workflow agents."
         )
+    if inner_background == "provider" and (
+        not isinstance(agent, RawAgent) or getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None) is not True
+    ):
+        raise RuntimeError("Provider background requires a RawAgent with a storing, resumable Responses client.")
     if options and options.steerable_conversations and is_workflow_agent:
         raise RuntimeError(
             "steerable_conversations=True is only supported for non-workflow agents. "
@@ -482,6 +599,11 @@ def _validate_agent_configuration(
                 "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
             )
         client_stores_by_default = stores_by_default
+        if not client_stores_by_default and agent.default_options.get("store") is not None:
+            raise RuntimeError(
+                "The chat client does not store by default, but the agent sets a downstream store option. "
+                "Remove that developer-owned default rather than letting hosting change it."
+            )
 
     return _AgentConfiguration(
         workflow=is_workflow_agent,
@@ -494,8 +616,6 @@ def _validate_agent_configuration(
 def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConfiguration) -> None:
     if not configuration.hosted_history or not isinstance(agent, RawAgent):
         return
-    if not configuration.client_stores_by_default:
-        agent.default_options.pop("store", None)
     if not any(
         _is_hosted_responses_history_sentinel(provider)
         for provider in cast(Sequence[ContextProvider], agent.context_providers)
@@ -505,95 +625,126 @@ def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConf
 
 # region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
-    """A responses server host for an agent."""
+    """A Foundry Responses server for an agent or native workflow."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
+        agent: AgentSource | None = None,
         *,
+        workflow: WorkflowSource[HostedResponseRequest] | None = None,
+        parse_response: Callable[[HostedResponseRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]]
+        | None = None,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        response_store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
-        history_source: Literal["agent_server", "agent"] = "agent_server",
+        inner_history: Literal["host", "service", "agent"] | None = None,
+        history_source: Literal["agent_server", "agent"] | None = None,
+        inner_background: Literal["host", "provider"] = "host",
+        prepare_options: OptionsHook | None = None,
+        unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
     ) -> None:
-        """Initialize a ResponsesHostServer.
+        """Configure a Foundry Responses host.
 
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+            workflow: A built native workflow, a builder, or a request-aware factory returning a built workflow.
+            parse_response: Required for native workflows; maps Responses input into a `WorkflowTurn`.
             prefix: The URL prefix for the server.
-            options: Optional server options.
-            store: Optional response store for input and history look up.
+            options: AgentServer configuration for background work, steering, and other protocol features.
+            store: Deprecated alias for `response_store`.
+            response_store: Backend for caller-visible Responses storage and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
-                If not provided, a default `AgentSessionStoreProvider` will be used.
             checkpoint_store_provider: Optional provider for workflow checkpoint storage.
-                If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
-                If not provided, a default `FunctionApprovalStoreProvider` will be used.
-            history_source: Source of conversation history supplied to the model for regular agents.
-                `"agent_server"` (default) uses the transcript from the configured response store,
-                requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
-                agent history providers, and disables downstream service storage.
-                `"agent"` passes only the current request input and preserves the agent's normal
-                history-provider or service-storage behavior. AgentServer still manages Responses
-                API persistence through `store` in both modes.
-            **kwargs: Additional keyword arguments.
-
-        Note:
-            1. When `history_source="agent_server"`, the agent must not have a history provider
-               with `load_messages=True`, because history is managed by the hosting infrastructure.
-            2. Context providers must not keep required state only on their Python instances,
-               because the hosting environment may get deactivated between requests. Provider
-               state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
-               `history_source="agent"` mode, is persisted by the configured session store.
-            3. The server owns the supplied agent instance and may add hosting-specific providers.
-               Do not reuse the same agent with another host or invoke it directly after construction.
-               An agent returned by a callable belongs to that request.
-            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
-               server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
-               When resiliency is enabled, and the server crashes mid-response:
-               - Background responses are automatically re-invoked on server restart (client won't see the crash).
-               - Stream events are preserved for client reconnection.
-               - State is maintained across crashes.
-            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
-               this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
-               Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
-               branches with no single well-defined "current point" to cancel and resume from, unlike an
-               agent's strictly linear execution. It's also not currently practical to implement: a workflow
-               instance cannot start a new run until its previous (steered-past) run has been garbage
-               collected, and that isn't guaranteed to have happened in time.
-
-        Raises:
-            ValueError: If `history_source` is not supported.
-            RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a non-workflow agent, or
-                `steerable_conversations=True` is requested for a workflow agent.
+            inner_history: Whether outer Responses history, downstream service storage, or agent history is used.
+            history_source: Deprecated alias for host or agent history selection.
+            inner_background: Keep provider background off by default; `"provider"` opts a supporting client in.
+            prepare_options: Optional hook to edit caller runtime options before `Agent.run`.
+            unsupported_options: Whether to ignore, warn, or reject options an agent cannot accept.
+            **kwargs: Additional AgentServer constructor arguments.
         """
-        if history_source not in ("agent_server", "agent"):
+        if history_source is not None and history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
-        validate_agent_source(agent)
+        if inner_history is not None and inner_history not in ("host", "service", "agent"):
+            raise ValueError("inner_history must be 'host', 'service', or 'agent'.")
+        if inner_history is not None and history_source is not None:
+            raise ValueError("inner_history and history_source cannot be combined.")
+        if inner_background not in ("host", "provider"):
+            raise ValueError("inner_background must be 'host' or 'provider'.")
+        if store is not None and response_store is not None:
+            raise ValueError("Pass response_store instead of store; they cannot be combined.")
+        if agent is None and workflow is None:
+            raise TypeError("agent must be an agent instance or a zero-argument callable, or provide workflow.")
+        if agent is not None and workflow is not None:
+            raise TypeError("Provide exactly one of agent or workflow.")
+
+        resolved_history: Literal["host", "service", "agent"] = inner_history or (
+            "agent" if history_source == "agent" else "host"
+        )
+        if workflow is not None:
+            validate_workflow_source(workflow)
+            if parse_response is None:
+                raise TypeError("parse_response is required when hosting a native Workflow.")
+            if options and options.steerable_conversations:
+                raise ValueError("Steering a native Workflow is not supported.")
+            if inner_background != "host":
+                raise ValueError("Provider background cannot be enabled for a native Workflow.")
+        else:
+            validate_agent_source(agent)
+            if parse_response is not None:
+                raise ValueError("parse_response is only valid for a native Workflow.")
+            if inner_background == "provider" and resolved_history != "service":
+                raise ValueError("Provider background requires inner_history='service'.")
+
+        if workflow is not None and not callable(workflow) and AgentConfig.from_env().is_hosted:
+            raise ValueError("Hosted workflows require a request-aware factory that creates fresh executors.")
 
         resolved_agent = agent if is_agent(agent) else None
         configuration = (
-            _validate_agent_configuration(resolved_agent, history_source, options)
+            _validate_agent_configuration(
+                resolved_agent,
+                "agent_server" if resolved_history == "host" else "agent",
+                options,
+                inner_background=inner_background,
+            )
             if resolved_agent is not None
             else None
         )
 
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
-        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+        super().__init__(
+            prefix=prefix,
+            options=options,
+            store=response_store if response_store is not None else store,
+            **kwargs,
+        )
+        if options and options.steerable_conversations:
+            # AgentServer needs its task manager even when crash recovery is not enabled.
+            from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
+
+            set_resilient_tasks_enabled(True)
 
         self._agent_source = agent
         self._agent = resolved_agent
         self._configuration = configuration
-        self._history_source: Literal["agent_server", "agent"] = history_source
+        self._workflow_source = workflow
+        self._parse_response = parse_response
+        self._inner_history = resolved_history
+        self._inner_background: Literal["host", "provider"] = inner_background
+        self._prepare_options = prepare_options
+        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._history_source: Literal["agent_server", "agent"] = (
+            "agent_server" if resolved_history == "host" else "agent"
+        )
         self._host_options = options
         self._uses_agent_server_history = (
-            configuration.agent_server_history if configuration is not None else history_source == "agent_server"
+            configuration.agent_server_history if configuration is not None else resolved_history == "host"
         )
         self._resilient_background = bool(options and options.resilient_background)
         if resolved_agent is not None and configuration is not None:
@@ -669,9 +820,40 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield response_event_stream.emit_in_progress()
 
         terminal_event: ResponseStreamEvent | None = None
+        try:
+            scope = FoundryRequestScope.from_context(
+                self.config,
+                get_request_context(),
+                local_session_id=context.response_id,
+            )
+            hosted_request = HostedResponseRequest(
+                request,
+                context,
+                scope,
+                response_run_options(request),
+                input_messages=lambda items: _items_to_messages(items, approval_storage=None),
+            )
+            await prepare_response_options(hosted_request, self._prepare_options)
+        except Exception as exc:
+            logger.exception("Failed to prepare hosted Responses request")
+            for event in self._emit_failure(response_event_stream, None, exc):
+                yield event
+            return
+
+        if self._workflow_source is not None:
+            async for event in self._handle_native_workflow_response(
+                hosted_request,
+                response_event_stream,
+                cancellation_signal,
+            ):
+                yield event
+            return
+
+        if self._agent_source is None:
+            raise RuntimeError("No agent or workflow source is configured.")
         agent = await resolve_agent(self._agent_source)
         configuration = self._configuration or _validate_agent_configuration(
-            agent, self._history_source, self._host_options
+            agent, self._history_source, self._host_options, inner_background=self._inner_background
         )
         if self._configuration is None:
             _initialize_agent_history(agent, configuration)
@@ -685,6 +867,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 agent,
                 configuration,
                 resources,
+                hosted_request,
             )
             try:
                 async for event in inner:
@@ -701,6 +884,372 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if terminal_event is not None:
             yield terminal_event
 
+    async def _load_workflow_responses(
+        self,
+        hosted_request: HostedResponseRequest,
+        *,
+        checkpoint_storage: CheckpointStorage | None,
+        checkpoint_id: str | None,
+        lineage_id: str,
+        bindings: FoundryWorkflowBindingStore,
+        approval_storage: FunctionApprovalStore | None,
+    ) -> dict[str, Any]:
+        """Bind caller decisions to requests recorded by the exact pause checkpoint."""
+        items = [cast(Mapping[str, Any], item) for item in await hosted_request.get_input_items()]
+        replies = [item for item in items if item.get("type") in ("mcp_approval_response", "function_call_output")]
+        if not replies:
+            return {}
+        if checkpoint_storage is None or checkpoint_id is None or approval_storage is None:
+            raise ValueError("Workflow approval and user-input continuation requires store=true.")
+        if len(replies) != len(items):
+            raise ValueError("Pending workflow replies cannot be mixed with new user input.")
+
+        checkpoint = await checkpoint_storage.load(checkpoint_id)
+        pending = checkpoint.pending_request_info_events
+        responses: dict[str, Any] = {}
+        approvals_to_consume: list[str] = []
+        for item in replies:
+            if item["type"] == "mcp_approval_response":
+                wire_id = item.get("approval_request_id")
+                decision = item.get("approve")
+                if not isinstance(wire_id, str) or type(decision) is not bool:
+                    raise ValueError("A workflow approval requires its request ID and a boolean decision.")
+                approval = await bindings.get_approval(wire_id, lineage_id=lineage_id)
+                pending_request = pending.get(approval.request_id)
+                if (
+                    pending_request is None
+                    or not isinstance(pending_request.data, Content)
+                    or pending_request.data.type != "function_approval_request"
+                ):
+                    raise ValueError("No matching pending workflow approval exists in the checkpoint.")
+                if approval.checkpoint_id != checkpoint_id:
+                    original = await checkpoint_storage.load(approval.checkpoint_id)
+                    recorded = original.pending_request_info_events.get(approval.request_id)
+                    if recorded is None or recorded.to_dict() != pending_request.to_dict():
+                        raise PermissionError("This approval no longer matches the pending workflow request.")
+                if approval.request_id in responses:
+                    raise ValueError("A pending workflow approval was answered more than once.")
+                approved_request = await approval_storage.load_approval_request(wire_id)
+                responses[approval.request_id] = approved_request.to_function_approval_response(decision)
+                approvals_to_consume.append(wire_id)
+                continue
+
+            call_id = item.get("call_id")
+            if not isinstance(call_id, str) or not call_id:
+                raise ValueError("Workflow function results require a call_id.")
+            matches = [
+                pending_id
+                for pending_id, event in pending.items()
+                if pending_id == call_id
+                or (
+                    isinstance(event.data, Content)
+                    and event.data.type == "function_call"
+                    and event.data.call_id == call_id
+                )
+            ]
+            if len(matches) != 1:
+                raise ValueError("A workflow function result must match exactly one pending request.")
+            request_id = matches[0]
+            if request_id in responses:
+                raise ValueError("A pending workflow request was answered more than once.")
+            pending_request = pending[request_id]
+            if pending_request.response_type is Content:
+                responses[request_id] = Content.from_function_result(
+                    call_id,
+                    result=_json_safe_to_str(item["output"]),
+                )
+            else:
+                responses[request_id] = item["output"]
+        for wire_id in approvals_to_consume:
+            approval = await bindings.get_approval(wire_id, lineage_id=lineage_id)
+            await bindings.consume_approval(wire_id, lineage_id=lineage_id, checkpoint_id=approval.checkpoint_id)
+        return responses
+
+    async def _handle_native_workflow_response(
+        self,
+        hosted_request: HostedResponseRequest,
+        response_event_stream: ResponseEventStream,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
+        """Run a native Workflow without constructing or calling WorkflowAgent."""
+        request = hosted_request.request
+        context = hosted_request.context
+        source = self._workflow_source
+        parser = self._parse_response
+        if source is None or parser is None:
+            raise RuntimeError("A native workflow source and parser are required.")
+
+        tracker = _OutputItemTracker(response_event_stream)
+        stored = request.get("store") is not False
+        resilient = stored and self._resilient_background and request.get("background") is True
+        pending_request_ids: set[str] = set()
+        wire_approvals: dict[str, str] = {}
+
+        try:
+            if not stored and (context.conversation_id is not None or request.get("previous_response_id") is not None):
+                raise ValueError("Workflow continuation requires store=true.")
+
+            workflow = await resolve_workflow(source, hosted_request)
+            if workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+                raise ValueError("Configure workflow checkpoints on the host, not on WorkflowBuilder.")
+
+            platform_context = get_request_context()
+            bindings = FoundryWorkflowBindingStore(hosted_request.scope)
+            previous_response_id = request.get("previous_response_id")
+            if context.conversation_id is not None and previous_response_id is not None:
+                raise ValueError("conversation and previous_response_id cannot be combined.")
+
+            prior: WorkflowBinding | None = None
+            expected_etag: str | None = None
+            if stored and context.conversation_id is not None:
+                prior, expected_etag = await bindings.get_conversation_head(context.conversation_id)
+            elif stored and previous_response_id is not None:
+                prior = await bindings.get_response(previous_response_id)
+                if prior is None:
+                    raise ValueError("The previous workflow response has no checkpoint in this Foundry session.")
+                if prior.conversation_id is not None:
+                    raise ValueError("Branching a workflow from a Responses conversation is not supported.")
+                lineage_head, expected_etag = await bindings.get_lineage_head(prior.lineage_id)
+                if lineage_head is None or lineage_head.response_id != prior.response_id:
+                    raise ValueError("Branching a workflow from an earlier response is not supported.")
+
+            if prior is not None and (
+                prior.workflow_name != workflow.name or prior.graph_hash != workflow.graph_signature_hash
+            ):
+                raise ValueError("The stored workflow checkpoint is incompatible with the current workflow.")
+            lineage_id = prior.lineage_id if prior is not None else context.conversation_id or context.response_id
+            checkpoint_storage = None
+            approval_storage = None
+            if stored:
+                context_id = hashlib.sha256(f"{workflow.name}\0{lineage_id}".encode()).hexdigest()
+                checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                    config=self.config,
+                    context_id=context_id,
+                    platform_context=platform_context,
+                )
+                approval_storage = self._function_approval_storage_provider.get_store(
+                    config=self.config,
+                    platform_context=platform_context,
+                )
+            hosted_request.set_input_messages(
+                lambda items: _items_to_messages(items, approval_storage=approval_storage)
+            )
+            hosted_request.set_workflow_responses(
+                lambda: self._load_workflow_responses(
+                    hosted_request,
+                    checkpoint_storage=checkpoint_storage,
+                    checkpoint_id=prior.checkpoint_id if prior is not None else None,
+                    lineage_id=lineage_id,
+                    bindings=bindings,
+                    approval_storage=approval_storage,
+                )
+            )
+
+            def snapshot_response(
+                checkpoint_id: str | None,
+            ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
+                if not resilient or checkpoint_id is None:
+                    return
+                if checkpoint_id == response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY):
+                    return
+                yield from tracker.close()
+                response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+                yield response_event_stream.checkpoint()
+
+            async def checkpoint_stamp() -> str | None:  # ruff: ignore[unused-async]
+                return workflow.get_last_checkpoint_id()
+
+            async def forward(
+                run: AsyncIterator[WorkflowEvent[Any]],
+                *,
+                already_pending: set[str] | None = None,
+            ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
+                iterator = _SignalledIterator(
+                    run,
+                    context.shutdown,
+                    cancellation_signal,
+                    stamp=checkpoint_stamp if resilient else None,
+                )
+                async with aclosing(iterator):
+                    async for workflow_event in iterator:
+                        if resilient:
+                            stamp = iterator.stamp
+                            if stamp is not None and not isinstance(stamp, str):
+                                raise TypeError("A workflow checkpoint stamp must be a string.")
+                            for output_event in snapshot_response(stamp):
+                                yield output_event
+                        if workflow_event.type == "request_info":
+                            request_id = workflow_event.request_id
+                            if not request_id:
+                                raise ValueError("A workflow user-input request has no ID.")
+                            if already_pending is not None and request_id in already_pending:
+                                continue
+                            if not stored:
+                                raise ValueError("Workflow approval and user input require store=true.")
+                            pending_request_ids.add(request_id)
+                        for update in _workflow_event_updates(workflow_event, context.response_id):
+                            async for output_event in tracker.handle_update(update, approval_storage=approval_storage):
+                                if workflow_event.type == "request_info" and isinstance(output_event, Mapping):
+                                    wire_event = cast(Mapping[str, Any], output_event)
+                                    output_item = wire_event.get("item")
+                                    item_data: Mapping[str, Any] = (
+                                        cast(Mapping[str, Any], output_item)
+                                        if isinstance(output_item, Mapping)
+                                        else dict[str, Any]()
+                                    )
+                                    wire_id = item_data.get("id")
+                                    if (
+                                        wire_event.get("type") == "response.output_item.added"
+                                        and item_data.get("type") == "mcp_approval_request"
+                                        and isinstance(wire_id, str)
+                                    ):
+                                        wire_approvals[wire_id] = workflow_event.request_id
+                                yield output_event
+                if iterator.signalled and context.shutdown.is_set() and resilient:
+                    await context.exit_for_recovery()
+
+            recovery_from: str | None = None
+            async with AsyncExitStack() as resources:
+                entered: set[int] = set()
+                for executor in workflow.executors.values():
+                    if isinstance(executor, AgentExecutor) and id(executor.agent) not in entered:
+                        entered.add(id(executor.agent))
+                        if isinstance(executor.agent, AbstractAsyncContextManager):
+                            await resources.enter_async_context(executor.agent)
+
+                if context.is_recovery:
+                    if not resilient or checkpoint_storage is None:
+                        raise RuntimeError("Workflow recovery requires a stored resilient background response.")
+                    checkpoint_id = response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
+                    if checkpoint_id is None:
+                        current = await bindings.get_response(context.response_id)
+                        checkpoint_id = current.checkpoint_id if current is not None else None
+                    if not isinstance(checkpoint_id, str):
+                        raise RuntimeError("Cannot recover a workflow response without a paired checkpoint.")
+                    recovery_from = checkpoint_id
+                    async for event in forward(
+                        workflow.run(stream=True, checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage)
+                    ):
+                        yield event
+                else:
+                    prior_pending: set[str] = set()
+                    if prior is not None:
+                        if checkpoint_storage is None:
+                            raise RuntimeError("A stored workflow continuation requires checkpoint storage.")
+                        checkpoint = await checkpoint_storage.load(prior.checkpoint_id)
+                        prior_pending = set(checkpoint.pending_request_info_events)
+                        async for event in forward(
+                            workflow.run(
+                                stream=True,
+                                checkpoint_id=prior.checkpoint_id,
+                                checkpoint_storage=checkpoint_storage,
+                            ),
+                            already_pending=prior_pending,
+                        ):
+                            yield event
+                    turn = parser(hosted_request)
+                    if inspect.isawaitable(turn):
+                        turn = await turn
+                    if not isinstance(turn, WorkflowTurn):
+                        raise TypeError("parse_response must return a WorkflowTurn.")
+                    if turn.responses is not None:
+                        if prior is None or checkpoint_storage is None:
+                            raise ValueError("Workflow approval and user-input continuation requires store=true.")
+                        if not set(turn.responses) <= prior_pending:
+                            raise ValueError("A workflow response does not match the pending checkpoint.")
+                        run = workflow.run(
+                            responses=turn.responses,
+                            stream=True,
+                            checkpoint_storage=checkpoint_storage,
+                            client_kwargs=turn.client_kwargs,
+                            function_invocation_kwargs=turn.function_invocation_kwargs,
+                        )
+                    else:
+                        if workflow.status == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+                            raise ValueError("Answer pending workflow requests before sending new input.")
+                        run = workflow.run(
+                            message=turn.input,
+                            stream=True,
+                            checkpoint_storage=checkpoint_storage,
+                            client_kwargs=turn.client_kwargs,
+                            function_invocation_kwargs=turn.function_invocation_kwargs,
+                        )
+                    carried_pending = prior_pending - set(turn.responses) if turn.responses is not None else None
+                    async for event in forward(run, already_pending=carried_pending):
+                        yield event
+
+                if cancellation_signal.is_set() and context.client_cancelled:
+                    return
+                checkpoint_id = workflow.get_last_checkpoint_id()
+                if resilient:
+                    for event in snapshot_response(checkpoint_id):
+                        yield event
+                if stored:
+                    if checkpoint_id is None or checkpoint_storage is None:
+                        raise RuntimeError("A stored workflow response must finish with a checkpoint.")
+                    if pending_request_ids:
+                        pause_id = await workflow.resolve_pause_checkpoint_id(
+                            pending_request_ids, checkpoint_storage=checkpoint_storage
+                        )
+                        if pause_id is None:
+                            raise RuntimeError("Cannot expose workflow user input without a durable pause checkpoint.")
+                        for wire_id, request_id in wire_approvals.items():
+                            await bindings.save_approval(
+                                WorkflowApproval(
+                                    wire_id=wire_id,
+                                    request_id=request_id,
+                                    response_id=context.response_id,
+                                    lineage_id=lineage_id,
+                                    checkpoint_id=pause_id,
+                                    session_id=hosted_request.scope.session_id,
+                                )
+                            )
+                    binding = WorkflowBinding(
+                        response_id=context.response_id,
+                        checkpoint_id=checkpoint_id,
+                        lineage_id=lineage_id,
+                        workflow_name=workflow.name,
+                        graph_hash=workflow.graph_signature_hash,
+                        session_id=hosted_request.scope.session_id,
+                        conversation_id=context.conversation_id,
+                    )
+                    await bindings.save_response(binding, recovery_from=recovery_from)
+                    should_advance = True
+                    if context.is_recovery:
+                        head, expected_etag = (
+                            await bindings.get_conversation_head(context.conversation_id)
+                            if context.conversation_id is not None
+                            else await bindings.get_lineage_head(lineage_id)
+                        )
+                        if head is not None:
+                            if head.response_id == context.response_id:
+                                if head.checkpoint_id == checkpoint_id:
+                                    should_advance = False
+                                elif head.checkpoint_id != recovery_from:
+                                    raise RuntimeError("Another response advanced this workflow during recovery.")
+                            elif prior is None or head.response_id != prior.response_id:
+                                raise RuntimeError("Another turn advanced this workflow during recovery.")
+                    if should_advance:
+                        if context.conversation_id is not None:
+                            await bindings.advance_conversation(
+                                context.conversation_id, binding, expected_etag=expected_etag
+                            )
+                        else:
+                            await bindings.advance_lineage(lineage_id, binding, expected_etag=expected_etag)
+
+            for event in tracker.close():
+                yield event
+            if cancellation_signal.is_set() and context.client_cancelled:
+                return
+            if tracker.oauth_consent_requested or tracker.incomplete_reason is not None:
+                yield response_event_stream.emit_incomplete(reason=tracker.incomplete_reason, usage=tracker.usage)
+            else:
+                yield response_event_stream.emit_completed(usage=tracker.usage)
+        except Exception as exc:
+            logger.error("Failed to produce response for workflow", exc_info=(type(exc), exc, exc.__traceback__))
+            for event in self._emit_failure(response_event_stream, tracker, exc):
+                yield event
+
     async def _handle_prepared_response(
         self,
         request: CreateResponse,
@@ -710,6 +1259,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         resources: AsyncExitStack,
+        hosted_request: HostedResponseRequest,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
         # consent failures (and other connection-time errors) in AgentFrameworkException; if
@@ -746,6 +1296,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     yield event
                 return
 
+            if request.get("store") is False:
+                for event in self._emit_failure(
+                    response_event_stream,
+                    None,
+                    ValueError("OAuth consent continuation requires store=true."),
+                ):
+                    yield event
+                return
+
             if not configuration.workflow:
                 try:
                     request_context = get_request_context()
@@ -762,7 +1321,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 f"previous_response_id={previous_response_id}."
                             )
                         session = agent.create_session()
-                    await session_storage.set(context.conversation_id or context.response_id, session)
+                    if previous_response_id is not None and context.conversation_id is None:
+                        if session.service_session_id is not None and session.state.get(
+                            _HOSTED_SOURCE_CONVERSATION_KEY
+                        ):
+                            raise ValueError("A service-managed downstream conversation cannot be forked.")
+                        session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
+                    if context.conversation_id is not None:
+                        session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
+                    await session_storage.set(context.response_id, session)
+                    if context.conversation_id is not None:
+                        await session_storage.set(context.conversation_id, session)
                 except Exception as save_error:
                     logger.error(
                         "Failed to persist the Agent Framework session for OAuth consent",
@@ -808,6 +1377,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     cancellation_signal,
                     agent,
                     configuration,
+                    hosted_request,
                 )
 
             try:
@@ -911,6 +1481,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
+        hosted_request: HostedResponseRequest,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Handle a regular (non-workflow) agent.
 
@@ -919,20 +1490,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         into a terminal ``response.failed`` event (draining the tracker so the
         SSE stream stays well-formed).
         """
-        if context.is_recovery:
-            logger.warning(
-                "Recovery mode is not supported for non-workflow agents. "
-                "The agent will restart from the original input."
-            )
+        provider_background = self._inner_background == "provider" and request.get("background") is True
+        if context.is_recovery and not provider_background:
+            raise RuntimeError("A non-resumable agent cannot be replayed after a process crash.")
 
+        stored = request.get("store") is not False
         request_messages_task: asyncio.Task[list[Message]] | None = None
         try:
             request_context = get_request_context()
-            approval_storage = self._function_approval_storage_provider.get_store(
-                config=self.config, platform_context=request_context
+            approval_storage = (
+                self._function_approval_storage_provider.get_store(config=self.config, platform_context=request_context)
+                if stored
+                else None
             )
-            session_storage = self._session_storage_provider.get_store(
-                config=self.config, platform_context=request_context
+            session_storage = (
+                self._session_storage_provider.get_store(config=self.config, platform_context=request_context)
+                if stored
+                else None
             )
 
             # Load the caller's input items and prior conversation history concurrently with the
@@ -947,15 +1521,41 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
             previous_response_id = request.get("previous_response_id")
-            session_load_id = context.conversation_id or previous_response_id
-            session = await session_storage.get(session_load_id) if session_load_id is not None else None
+            session_load_id = (
+                context.response_id
+                if context.is_recovery and provider_background
+                else context.conversation_id or previous_response_id
+            )
+            session = (
+                await session_storage.get(session_load_id)
+                if session_storage is not None and session_load_id is not None
+                else None
+            )
             if session is None:
-                if previous_response_id is not None and context.conversation_id is None:
+                if context.is_recovery and provider_background:
+                    raise RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                if stored and previous_response_id is not None and context.conversation_id is None:
                     raise RuntimeError(
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
-            session_save_id = context.conversation_id or context.response_id
+            if not stored:
+                if not isinstance(agent, RawAgent):
+                    raise RuntimeError("A custom agent cannot guarantee store=false for its inner model.")
+                continuation_defaults = [
+                    name
+                    for name in ("conversation_id", "previous_response_id", "conversation")
+                    if agent.default_options.get(name) is not None
+                ]
+                if continuation_defaults:
+                    raise RuntimeError(
+                        "store=false cannot use developer defaults for downstream service continuation: "
+                        + ", ".join(continuation_defaults)
+                    )
+            if previous_response_id is not None and context.conversation_id is None:
+                if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
+                    raise ValueError("A service-managed downstream conversation cannot be forked.")
+                session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -985,7 +1585,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": messages,
                 "session": session,
             }
-            chat_options, are_options_set = _to_chat_options(request)
+            chat_options = cast(ChatOptions[Any], dict(hosted_request.options))
+            are_options_set = bool(chat_options)
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
@@ -994,23 +1595,62 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else:
                     # Do not pass a storage option to clients that do not advertise support for it.
                     chat_options.pop("store", None)
+            elif self._inner_history == "service":
+                chat_options["store"] = stored
+                if not stored:
+                    session.service_session_id = None
+            else:
+                chat_options["store"] = False
+                session.service_session_id = None
 
             if isinstance(agent, RawAgent):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
+                if self._unsupported_options == "error":
+                    raise TypeError("The hosted agent does not accept caller runtime options.")
+                if self._unsupported_options == "warn":
+                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
-            # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
-            # both shutdown and steering/cancel just wind the turn down once observed.
-            agent_stream = _SignalledIterator(
-                agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
-                context.shutdown,
-                cancellation_signal,
-            )
-            async with aclosing(agent_stream):
-                async for update in agent_stream:
+            if provider_background:
+                if session_storage is None or not isinstance(agent, RawAgent):
+                    raise RuntimeError("Provider background requires a stored MAF agent session.")
+                updates = self._provider_background_updates(
+                    agent=cast(RawAgent[ChatOptions[Any]], agent),
+                    messages=messages,
+                    session=session,
+                    session_storage=session_storage,
+                    options=chat_options,
+                    context=context,
+                    cancellation_signal=cancellation_signal,
+                )
+            else:
+                updates = _SignalledIterator(
+                    agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
+                    context.shutdown,
+                    cancellation_signal,
+                )
+            last_continuation_token: object | None = None
+            async with aclosing(updates):
+                async for update in updates:
+                    if not provider_background:
+                        last_continuation_token = update.continuation_token
+                    if not stored and any(
+                        content.type in ("function_approval_request", "oauth_consent_request")
+                        or content.user_input_request
+                        for content in update.contents
+                    ):
+                        raise ValueError("Approval and user-input continuation requires store=true.")
                     async for event in tracker.handle_update(update, approval_storage=approval_storage):
                         yield event
+            if (
+                isinstance(updates, _SignalledIterator)
+                and not updates.signalled
+                and last_continuation_token is not None
+            ):
+                raise RuntimeError(
+                    "The inner agent returned an unfinished provider response; "
+                    "configure inner_background='provider' to resume it."
+                )
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -1037,8 +1677,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if request_failure is None and not request_interrupted:
                     request_failure = misconfigured
             try:
-                if not stored_output_violation:
-                    await session_storage.set(session_save_id, session)
+                final_provider_state = not provider_background or (
+                    request_failure is None
+                    and not request_interrupted
+                    and _HOSTED_PROVIDER_STATE_KEY not in session.state
+                )
+                superseded_by_steering = bool(self._host_options and self._host_options.steerable_conversations) and (
+                    cancellation_signal.is_set() and not context.client_cancelled and not context.shutdown.is_set()
+                )
+                if session_storage is not None and not stored_output_violation and final_provider_state:
+                    if context.conversation_id is not None:
+                        session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
+                    await session_storage.set(context.response_id, session)
+                    if context.conversation_id is not None and not superseded_by_steering:
+                        await session_storage.set(context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1058,6 +1710,74 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise request_failure
         elif save_failure is not None:
             raise save_failure
+
+    async def _provider_background_updates(
+        self,
+        *,
+        agent: RawAgent[ChatOptions[Any]],
+        messages: list[Message],
+        session: AgentSession,
+        session_storage: SessionStore,
+        options: ChatOptions[Any],
+        context: ResponseContext,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncGenerator[AgentResponseUpdate]:
+        """Poll an inner provider token while AgentServer owns the outer background response."""
+        if context.is_recovery:
+            saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
+            if not isinstance(saved, Mapping):
+                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+            saved_payload = cast(Mapping[str, Any], saved)
+            if saved_payload.get("outer_response_id") != context.response_id:
+                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+            token = saved_payload.get("continuation_token")
+            if not isinstance(token, Mapping):
+                raise RuntimeError("The stored provider continuation token is invalid.")
+            continuation_token: Mapping[str, Any] = cast(Mapping[str, Any], token)
+        else:
+            first = await agent.run(
+                messages,
+                session=session,
+                options=cast(ChatOptions[Any], {**options, "background": True}),
+            )
+            if first.continuation_token is None:
+                for update in _agent_response_updates(first, context.response_id):
+                    yield update
+                return
+            first_token = first.continuation_token
+            if not isinstance(first_token, Mapping):
+                raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
+            continuation_token = cast(Mapping[str, Any], first_token)
+            session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                "outer_response_id": context.response_id,
+                "continuation_token": dict(continuation_token),
+            }
+            await session_storage.set(context.response_id, session)
+
+        while True:
+            if context.shutdown.is_set() and self._resilient_background:
+                await context.exit_for_recovery()
+            if cancellation_signal.is_set() and context.client_cancelled:
+                return
+            await asyncio.sleep(2)
+            current = await agent.run(
+                session=session,
+                options=cast(ChatOptions[Any], {"continuation_token": continuation_token, "store": True}),
+            )
+            if current.continuation_token is None:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                await session_storage.set(context.response_id, session)
+                for update in _agent_response_updates(current, context.response_id):
+                    yield update
+                return
+            if not isinstance(current.continuation_token, Mapping):
+                raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
+            continuation_token = cast(Mapping[str, Any], current.continuation_token)
+            session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                "outer_response_id": context.response_id,
+                "continuation_token": dict(continuation_token),
+            }
+            await session_storage.set(context.response_id, session)
 
     async def _handle_inner_workflow(
         self,
@@ -1108,32 +1828,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         checkpoint_id, checkpoint_storage, context.response_id, agent
                     )
                 else:
-                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
-                    if latest_checkpoint is not None:
-                        logger.debug(
-                            "Found a workflow checkpoint %s but no prior response snapshot was durably persisted; "
-                            "resuming from the latest checkpoint",
-                            latest_checkpoint.checkpoint_id,
-                        )
-                        run_stream = self._resume_workflow_from_checkpoint(
-                            latest_checkpoint.checkpoint_id,
-                            checkpoint_storage,
-                            context.response_id,
-                            agent,
-                        )
-                    else:
-                        # No checkpoint was ever paired with a persisted response snapshot (e.g. the crash
-                        # happened before the very first response checkpoint() call); replay the original
-                        # input as a fresh entry, per the recovered-input parity guarantee
-                        # (context.get_input_items() is unchanged from fresh entry).
-                        logger.debug(
-                            "Serving recovery request with no prior workflow checkpoint; replaying original input"
-                        )
-                        run_stream = agent.run(
-                            input_messages,
-                            stream=True,
-                            checkpoint_storage=checkpoint_storage,
-                        )
+                    raise RuntimeError("Cannot recover a workflow without a checkpoint paired with persisted output.")
             else:
                 # Determine the latest checkpoint (if any) so we can resume the
                 # workflow's prior state for this turn. The directory is keyed by

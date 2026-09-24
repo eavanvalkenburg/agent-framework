@@ -15,9 +15,9 @@ Environment variables:
 import asyncio
 import os
 
-from agent_framework import Agent, Executor, Message, Workflow, WorkflowBuilder, WorkflowContext, executor, handler
+from agent_framework import Agent, Executor, Workflow, WorkflowBuilder, WorkflowContext, executor, handler
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import HostedResponseRequest, ResponsesHostServer, WorkflowTurn
 from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -43,9 +43,9 @@ class StartExecutor(Executor):
         self._agent = agent
 
     @handler
-    async def extract_target(self, messages: list[Message], ctx: WorkflowContext[int, str]) -> None:
+    async def extract_target(self, prompt: str, ctx: WorkflowContext[int, str]) -> None:
         """Ask the model for a target and forward valid positive integers."""
-        response = await self._agent.run(messages, options={"response_format": CounterTarget})
+        response = await self._agent.run(prompt, options={"response_format": CounterTarget, "store": False})
         extraction = response.value
         if not isinstance(extraction, CounterTarget) or extraction.target is None or extraction.target <= 0:
             await ctx.yield_output("The message must contain a positive integer counter target.")
@@ -98,6 +98,14 @@ def build_workflow(client: FoundryChatClient) -> Workflow:
     )
 
 
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[str]:
+    """Translate this request's input into the start executor's prompt."""
+    prompt = await request.get_input_text()
+    if not prompt:
+        raise ValueError("A positive integer counter target is required.")
+    return WorkflowTurn(input=prompt)
+
+
 def main() -> None:
     """Run the workflow as a durable Responses API host."""
     print(f"PID: {os.getpid()}")  # lets crash-recovery testing find and kill this process
@@ -107,7 +115,8 @@ def main() -> None:
         credential=DefaultAzureCredential(),
     )
     server = ResponsesHostServer(
-        agent=lambda: build_workflow(client).as_agent(name="countdown-workflow"),
+        workflow=lambda request: build_workflow(client),
+        parse_response=parse_response,
         options=ResponsesServerOptions(resilient_background=True),
         log_level="DEBUG",
     )

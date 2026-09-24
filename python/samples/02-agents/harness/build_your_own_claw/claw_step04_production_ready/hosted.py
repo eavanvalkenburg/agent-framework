@@ -44,19 +44,21 @@ Run locally:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
 
 from agent import build_claw_agent
-from agent_framework import FileSystemAgentFileStore, InMemoryHistoryProvider
+from agent_framework import Agent, FileSystemAgentFileStore, InMemoryHistoryProvider
 from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.core import get_request_context
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
-# File memory writes to disk, and the deployed code directory is read-only on Foundry hosted agents,
-# so the harness default of ``{cwd}/agent-file-memory`` cannot be created. The home directory is
-# writable, so root the store there.
+# File memory writes to disk; the deployed code directory is read-only, while
+# Foundry persists the session's home directory.
 _FILE_MEMORY_DIR = Path.home() / ".claw" / "agent-file-memory"
 
 logger = logging.getLogger(__name__)
@@ -96,15 +98,21 @@ def _log_environment() -> None:
     )
 
 
-async def main() -> None:
-    """Build the claw and expose it with the Foundry Responses host server."""
-    _configure_logging()
-    load_dotenv()
-    _log_environment()
+def _file_memory_dir() -> Path:
+    """Separate memory for different users and hosted sandbox sessions."""
+    context = get_request_context()
+    if not context.session_id:
+        raise RuntimeError("A Foundry session ID is required for hosted file memory.")
+    scope = json.dumps([context.user_id, context.session_id], separators=(",", ":"))
+    return _FILE_MEMORY_DIR / hashlib.sha256(scope.encode("utf-8")).hexdigest()
 
+
+async def create_agent() -> Agent:
+    """Build tools and file memory for the current request's trusted scope."""
     credential = DefaultAzureCredential()
-    logger.info("File memory enabled (local filesystem at %s).", _FILE_MEMORY_DIR)
-    agent = await build_claw_agent(
+    memory_dir = _file_memory_dir()
+    logger.info("File memory enabled (session-scoped filesystem at %s).", memory_dir)
+    return await build_claw_agent(
         credential=credential,
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
@@ -117,12 +125,19 @@ async def main() -> None:
         enable_file_access=False,
         enable_shell=False,
         # File memory is on by default; keep it, but on a writable path (see _FILE_MEMORY_DIR).
-        file_memory_store=FileSystemAgentFileStore(_FILE_MEMORY_DIR),
+        file_memory_store=FileSystemAgentFileStore(memory_dir),
         # Purview authenticates via the container's managed identity; InteractiveBrowserCredential
         # cannot run on a headless hosted container.
         purview_credential=credential,
     )
-    server = ResponsesHostServer(agent)
+
+
+async def main() -> None:
+    """Expose the claw through the Foundry Responses protocol."""
+    _configure_logging()
+    load_dotenv()
+    _log_environment()
+    server = ResponsesHostServer(agent=create_agent, inner_history="host")
     await server.run_async()
 
 

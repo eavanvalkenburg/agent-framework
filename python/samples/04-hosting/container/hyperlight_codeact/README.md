@@ -1,5 +1,8 @@
 # What this sample demonstrates
 
+> The hosted entry point uses the breaking `agent-framework-foundry-hosting` API in this worktree.
+> Install it from source; older published betas do not support this API.
+
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that
 runs Python in a [Hyperlight](https://github.com/hyperlight-dev/hyperlight)
 WebAssembly sandbox via the **CodeAct** pattern, hosted using the **Responses

@@ -70,8 +70,10 @@ def _config(*, is_hosted: bool) -> AgentConfig:
     )
 
 
-def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> FoundryAgentRequestContext:
-    return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
+def _platform_context(
+    call_id: str = "call-1", user_id: str = "user-1", session_id: str = "sandbox-1"
+) -> FoundryAgentRequestContext:
+    return FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id)
 
 
 def test_local_agentserver_state_root_is_test_scoped(tmp_path: Path) -> None:
@@ -454,7 +456,7 @@ async def test_get_agent_session_returns_deserialized_session() -> None:
     store = _store()
     session = AgentSession(session_id="agent-session-1")
     session.state["turn_count"] = 2
-    store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict()))
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict(), etag="etag-1"))
 
     with patch(
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
@@ -480,6 +482,59 @@ async def test_get_missing_agent_session_returns_none() -> None:
         result = await FoundryAgentSessionStore(_platform_context()).get("missing")
 
     assert result is None
+
+
+async def test_agent_session_updates_a_loaded_conversation_conditionally() -> None:
+    store = _store()
+    session = AgentSession(session_id="agent-session-1")
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict(), etag="etag-1"))
+    store.set_item = AsyncMock(side_effect=[SimpleNamespace(etag="etag-2"), SimpleNamespace(etag="etag-3")])
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        sessions = FoundryAgentSessionStore(_platform_context())
+        assert await sessions.get("conversation-1") is not None
+        await sessions.set("conversation-1", session)
+        await sessions.set("conversation-1", session)
+
+    assert store.set_item.await_args_list[0].kwargs == {"if_match": "etag-1", "call_id": "call-1"}
+    assert store.set_item.await_args_list[1].kwargs == {"if_match": "etag-2", "call_id": "call-1"}
+
+
+async def test_new_agent_conversation_uses_create_only_after_missing_read() -> None:
+    store = _store()
+    session = AgentSession(session_id="agent-session-1")
+    store.get_item = AsyncMock(return_value=None)
+    store.create_item = AsyncMock(return_value=SimpleNamespace(etag="etag-1"))
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        sessions = FoundryAgentSessionStore(_platform_context())
+        assert await sessions.get("conversation-1") is None
+        await sessions.set("conversation-1", session)
+
+    store.create_item.assert_awaited_once_with("conversation-1", session.to_dict(), call_id="call-1")
+    store.set_item.assert_not_awaited()
+
+
+async def test_concurrent_agent_conversation_turn_does_not_overwrite_newer_session() -> None:
+    store = _store()
+    session = AgentSession(session_id="agent-session-1")
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict(), etag="etag-1"))
+    store.set_item = AsyncMock(side_effect=FoundryStorageConflictError("etag mismatch"))
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        sessions = FoundryAgentSessionStore(_platform_context())
+        assert await sessions.get("conversation-1") is not None
+        with pytest.raises(RuntimeError, match="Another request advanced this agent session"):
+            await sessions.set("conversation-1", session)
+
+    assert store.set_item.await_args is not None
+    assert store.set_item.await_args.kwargs["if_match"] == "etag-1"
 
 
 async def test_delete_agent_session_is_idempotent() -> None:
@@ -517,3 +572,45 @@ def test_agent_session_storage_provider_creates_request_scoped_storage() -> None
 
     assert storage_type.call_args_list[0].args == (first_context,)
     assert storage_type.call_args_list[1].args == (second_context,)
+
+
+async def test_hosted_stores_partition_same_user_by_sandbox_and_workflow_context() -> None:
+    names: list[str] = []
+    store = _store()
+
+    async def get_store(name: str, *, user_isolation: bool) -> MagicMock:
+        assert user_isolation is True
+        names.append(name)
+        return store
+
+    config = _config(is_hosted=True)
+    first = _platform_context(session_id="sandbox-1")
+    second = _platform_context(session_id="sandbox-2")
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=get_store,
+    ):
+        for context in (first, second):
+            session_store = AgentSessionStoreProvider().get_store(config=config, platform_context=context)
+            await session_store.set("response-1", AgentSession())
+            checkpoint_store = CheckpointStoreProvider().get_store(
+                config=config, context_id="conversation-1", platform_context=context
+            )
+            await checkpoint_store.save(_checkpoint("checkpoint-1"))
+            approval_store = FunctionApprovalStoreProvider().get_store(config=config, platform_context=context)
+            await approval_store.save_approval_request("approval-1", _approval_request("approval-1"))
+
+    assert len(names) == 6
+    assert len(set(names)) == 6
+    assert all(len(name) <= 128 for name in names)
+    assert all("user-1" not in name and "sandbox-" not in name for name in names)
+    assert store.set_item.await_args_list[0].kwargs["call_id"] == "call-1"
+
+
+def test_hosted_store_provider_fails_without_platform_session() -> None:
+    with pytest.raises(RuntimeError, match="platform session ID"):
+        AgentSessionStoreProvider().get_store(
+            config=_config(is_hosted=True),
+            platform_context=FoundryAgentRequestContext(call_id="call-1", user_id="user-1"),
+        )

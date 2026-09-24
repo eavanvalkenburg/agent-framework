@@ -4,7 +4,8 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -12,14 +13,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-async def main():
+def create_agent() -> Agent:
+    """Keep the Toolbox MCP connection within one request's caller context."""
     credential = DefaultAzureCredential()
 
     # FoundryToolbox resolves the toolbox endpoint from the environment
     # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME), authenticates
     # every request with the credential, and transparently forwards the platform
-    # per-request call-id to the toolbox. The hosting server enters the agent, which
-    # connects the toolbox on first use and closes it at shutdown.
+    # call-id to the toolbox. A request-scoped agent prevents the MCP connection
+    # from retaining a previous request's identity in a long-lived writer task.
     toolbox = FoundryToolbox(credential)
 
     # Create the chat client
@@ -29,17 +31,15 @@ async def main():
         credential=credential,
     )
 
-    agent = Agent(
+    return Agent(
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
         tools=toolbox,
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+
+async def main() -> None:
+    server = ResponsesHostServer(agent=create_agent, inner_history="host")
     await server.run_async()
 
 

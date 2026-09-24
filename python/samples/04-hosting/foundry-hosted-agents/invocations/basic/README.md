@@ -1,62 +1,48 @@
-# What this sample demonstrates
+# Invocations: explicit request parsing
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted using the **Invocations protocol** with session management. Unlike the Responses protocol, the Invocations protocol does **not** provide built-in server-side conversation history — this agent maintains an in-memory session store keyed by `agent_session_id`. In production, replace it with durable storage (Redis, Cosmos DB, etc.) so history survives restarts.
+The Invocations protocol accepts application-defined JSON, not a native Responses option schema. [`main.py`](main.py)
+validates `{"message": "...", "options": {...}, "stream": false}` and returns an `InvocationRun`. The host applies
+the developer's option hook (if configured), then MAF's normal runtime-over-default option merge. Invalid request
+shapes fail as client errors; unsupported runtime options use the configured `"ignore"`, `"warn"`, or `"error"` mode.
+The example hook drops caller-supplied `store` and `conversation_id`, leaving the agent's developer-configured
+`store=False` in effect instead of letting an arbitrary JSON body enable downstream model storage.
 
-## How It Works
+Invocations has **no platform-managed conversation history**. The host uses durable MAF session state scoped by the
+trusted platform user and Foundry `agent_session_id`, rather than an in-process dictionary that disappears when the
+container is suspended. The Foundry session also owns the sandbox files, but it is not an `AgentSession.session_id`.
+The application request body cannot select a different user's session.
 
-### Model Integration
-
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. When a request arrives, the handler looks up (or creates) a session by `session_id`, runs the agent with the user message and session context, and returns the reply. The agent supports both streaming (SSE events) and non-streaming (JSON) response modes.
-
-See [main.py](main.py) for the full implementation.
-
-### Agent Hosting
-
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `InvocationsHostServer`, which provisions a REST API endpoint compatible with the Azure AI Invocations protocol.
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
-
-Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
+To invoke, start the host and send:
 
 ```bash
-curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi"}'
+curl -i -X POST http://localhost:8088/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hi", "options": {"temperature": 0.3}}'
 ```
 
-Or with streaming:
+The host returns the reply and the platform supplies `x-agent-session-id` in the response headers. To continue in
+that sandbox, put the returned ID in the **Invocations query parameter**, not in the JSON body:
 
 ```bash
-curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi", "stream": true}'
+curl -i -X POST "http://localhost:8088/invocations?agent_session_id=REPLACE_WITH_SESSION_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What did I ask earlier?", "stream": true}'
 ```
 
-The server will respond with a JSON object containing the response text. The `-i` flag in the `curl` command includes the HTTP response headers in the output, which includes the session ID that can be used for multi-turn conversations. Here is an example of the response:
+The parser controls the payload-to-MAF mapping; `stream=true` selects proper SSE framing rather than raw text
+mislabelled as an event stream. Follow the [parent hosting guide](../../README.md) for local and Foundry setup.
 
-```
-HTTP/1.1 200
-content-length: 34
-content-type: application/json
-x-agent-invocation-id: ec04d020-a0e7-441e-ae83-db75635a9f83
-x-agent-session-id: 9370b9d4-cd13-4436-a57f-03b843ac0e17
-x-platform-server: azure-ai-agentserver-core/2.0.0a20260410006 (python/3.12)
-date: Fri, 17 Apr 2026 23:46:44 GMT
-server: hypercorn-h11
+## Native workflow alternative
 
-Hi! How can I help?
-```
-
-### Multi-turn conversation
-
-To have a multi-turn conversation with the agent, take the session ID from the response headers of the previous request and include it in URL parameters for the next request. For example:
+[`workflow.py`](workflow.py) is a self-contained alternative entry point using a typed `Ticket` start input. Its
+parser validates the application JSON and the `TicketStart` executor records the ticket ID with `ctx.set_state()`.
+The host calls the request-aware workflow factory on each invocation, restores a checkpoint scoped to the trusted
+Foundry session, and delivers the new input. There is no Responses conversation ID or `workflow.as_agent()` wrapper.
 
 ```bash
-curl -X POST http://localhost:8088/invocations?agent_session_id=9370b9d4-cd13-4436-a57f-03b843ac0e17 -i -H "Content-Type: application/json" -d '{"message": "How are you?"}'
+curl -i -X POST http://localhost:8088/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"ticket_id": "T-123", "question": "What is the status?"}'
 ```
 
-## Deploying the Agent to Foundry
-
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
+To deploy this alternative, change the sample service's entry point from `main.py` to `workflow.py`.

@@ -8,6 +8,9 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) agent that co
 
 The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It registers a remote MCP tool pointing at `https://api.githubcopilot.com/mcp/`, authenticating with a GitHub Personal Access Token (PAT). When the model decides to call a tool, the framework forwards the call to the MCP server and returns the result to the model for the final reply.
 
+The PAT belongs to the **host application**, not the caller. Use caller-specific authentication for tools that
+access user-private resources; Foundry session isolation does not partition an external GitHub account.
+
 See [main.py](main.py) for the full implementation.
 
 ### Agent Hosting

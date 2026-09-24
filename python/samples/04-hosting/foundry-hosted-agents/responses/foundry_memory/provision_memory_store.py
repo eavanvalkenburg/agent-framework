@@ -19,7 +19,7 @@ Required env vars (also read from a local ``.env`` file if present):
     AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME      Embedding model deployment used by the memory store
     MEMORY_STORE_NAME                             Name of the memory store to create
 
-Your identity needs ``Azure AI User`` on the Foundry project scope.
+Your identity needs ``Foundry User`` on the Foundry project scope.
 """
 
 import asyncio

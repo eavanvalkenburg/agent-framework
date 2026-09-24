@@ -5,7 +5,8 @@ import os
 
 from agent_framework import Agent
 from agent_framework.azure import AzureAISearchContextProvider
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -45,12 +46,8 @@ async def main():
                 "document when available."
             ),
             context_providers=[search_provider],
-            # History will be managed by the hosting infrastructure, thus there
-            # is no need to store history by the service. Learn more at:
-            # https://developers.openai.com/api/reference/resources/responses/methods/create
-            default_options={"store": False},
         )
-        server = ResponsesHostServer(agent)
+        server = ResponsesHostServer(agent=agent, inner_history="host")
         await server.run_async()
 
 

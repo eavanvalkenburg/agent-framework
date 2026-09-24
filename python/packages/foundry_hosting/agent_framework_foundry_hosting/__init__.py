@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from ._invocations import InvocationsHostServer
+    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn
     from ._responses import ResponsesHostServer
+    from ._scope import FoundryRequestScope
     from ._state_store import (
         AgentSessionStoreProvider,
         CheckpointStoreProvider,
@@ -31,12 +33,16 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "FoundryAgentSessionStore": "._state_store",
     "FoundryCheckpointStore": "._state_store",
     "FoundryFunctionApprovalStore": "._state_store",
+    "FoundryRequestScope": "._scope",
     "FoundryToolbox": "._toolbox",
     "FunctionApprovalStore": "._state_store",
     "FunctionApprovalStoreProvider": "._state_store",
+    "HostedResponseRequest": "._request",
+    "InvocationRun": "._request",
     "InvocationsHostServer": "._invocations",
     "ResponsesHostServer": "._responses",
     "StoreProvider": "._state_store",
+    "WorkflowTurn": "._request",
 }
 
 __all__ = [
@@ -46,12 +52,16 @@ __all__ = [
     "FoundryAgentSessionStore",
     "FoundryCheckpointStore",
     "FoundryFunctionApprovalStore",
+    "FoundryRequestScope",
     "FoundryToolbox",
     "FunctionApprovalStore",
     "FunctionApprovalStoreProvider",
+    "HostedResponseRequest",
+    "InvocationRun",
     "InvocationsHostServer",
     "ResponsesHostServer",
     "StoreProvider",
+    "WorkflowTurn",
 ]
 
 

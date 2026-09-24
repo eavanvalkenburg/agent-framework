@@ -9,7 +9,7 @@ and drains the new turn next.
 Steering is only supported for non-workflow agents. Steering a workflow is conceptually undefined: a workflow's
 graph may have loops or parallel branches with no single well-defined "current point" to cancel and resume from,
 unlike an agent's strictly linear execution. `ResponsesHostServer` rejects `steerable_conversations=True` for a
-workflow agent with `RuntimeError`.
+native workflow until workflow steering has defined semantics.
 
 ## How It Works
 
@@ -19,7 +19,8 @@ The agent (see [main.py](main.py)) is a single `Agent` backed by `FoundryChatCli
 agent class. Its instructions ask it to count down one integer per line, prefacing each with a brief remark, so a
 real streamed generation takes long enough for a second turn to arrive mid-stream. Compared to the
 [Basic](../basic/) sample, the only differences are the instructions and passing
-`ResponsesServerOptions(steerable_conversations=True)` -- steering needs no special agent-side code.
+`ResponsesServerOptions(steerable_conversations=True)` -- the host enables AgentServer's multi-turn task manager;
+steering needs no special agent-side code.
 
 ### Agent Hosting
 
@@ -71,9 +72,9 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
   -d '{"input": "Actually, count down from 3 instead.", "store": true, "background": true, "previous_response_id": "REPLACE_WITH_FIRST_RESPONSE_ID", "agent_session_id": "REPLACE_WITH_X-AGENT-SESSION-ID_HEADER"}'
 ```
 
-This second request returns immediately with `"status": "queued"`. Polling the *first* response's id will show it
-completed early, with fewer tokens than a full 30-count run. Polling the *second* response's id will show a fresh
-countdown from 3.
+This second request returns immediately with `"status": "queued"` or `"in_progress"` if it starts running at once.
+Polling the *first* response's id will show it completed early, with fewer tokens than a full 30-count run.
+Polling the *second* response's id will show a fresh countdown from 3.
 
 Alternatively, send an explicit `conversation` id on every turn instead of forwarding `x-agent-session-id`. This is
 simpler and also works without `previous_response_id` at all, since the `conversation` id alone identifies the chain:
@@ -89,11 +90,11 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 ## Testing steering
 
 [verify_steering.py](verify_steering.py) runs the whole scenario end to end: it starts the server, kicks off a
-background streaming countdown, waits for it to stream a minimum number of tokens, sends a second turn with a new
-target via `previous_response_id`, and asserts that the second turn is accepted immediately as `"queued"`, that the
+background streaming countdown with a fresh explicit `conversation`, waits for it to stream a minimum number of
+tokens, sends a second turn on the same conversation, and asserts that the second turn is accepted immediately, that the
 first turn completes early, and that the second (steered) turn's output contains the new target's countdown in
 order. Because this sample calls a real model, the assertions here are intentionally loose rather than an exact
-output match.
+output match. It uses a temporary AgentServer state root instead of touching your shared `~/.agentserver` state.
 
 ```bash
 python verify_steering.py --first-target 30 --second-target 3

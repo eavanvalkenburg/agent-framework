@@ -1,45 +1,52 @@
 # Foundry Hosted Agent Samples
 
-This directory contains samples that demonstrate how to use hosted [Agent Framework](https://github.com/microsoft/agent-framework) agents with different capabilities and configurations on Foundry using the Foundry Hosting Agent service. Each sample includes a README with instructions on how to set up, run, and interact with the agent.
+This directory contains Python samples for hosting [Agent Framework](https://github.com/microsoft/agent-framework)
+agents and native workflows in Microsoft Foundry. AgentServer remains responsible for the Responses and Invocations
+protocols; the Foundry-hosting package supplies MAF execution and session-scoped storage.
 
-> [IMPORTANT] Migrating from Protocol version 1.0.0 to 2.0.0: Foundry Hosting Agents service has been updated to use Protocol version 2.0.0. If your application is using Protocol version 1.0.0, please upgrade to Protocol version 2.0.0 in your `agent.manifest.yaml` or `agent.yaml` and upgrade to the latest `agent-framework-foundry-hosting` package. `agent-framework-foundry-hosting==1.0.0a260625` is the last version that supports Protocol version 1.0.0.
->
-> The `agent-framework-foundry-hosting` Python API surface is intended to remain stable, but protocol 1.0.0 and 2.0.0 are incompatible.
+> [!IMPORTANT]
+> The high-level host entry points use the breaking API implemented in this worktree's
+> `agent-framework-foundry-hosting` package. Install it from this source checkout; older published betas do not
+> support this API. The Invocations `break_glass` and `telegram` examples intentionally use AgentServer directly.
+> All hosted manifests continue to declare the supported container protocol version `2.0.0`.
+
 ## Samples
 
 ### Responses API
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](responses/basic/) | A minimal agent demonstrating basic request/response interaction and multi-turn conversations using `previous_response_id`. |
-| 2 | [Tools](responses/tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
+| 1 | [Basic and history modes](responses/basic/) | Caller `store`, `inner_history="host" / "service" / "agent"`, runtime option hooks and `extra_body`, and client polling via outer `response.id`. |
+| 2 | [Tools](responses/tools/) | Benign local tools and a stored, cross-turn approval request. |
 | 3 | [MCP](responses/mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
-| 5 | [Workflows](responses/workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Files](responses/files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 5 | [Native workflows and approval](responses/workflows/) | A required Responses-to-workflow parser, a request-aware factory, start-executor state, scoped checkpoints, and native approval resume. No `workflow.as_agent()`. |
+| 6 | [Files](responses/files/) | Read only files in a dedicated directory inside the current Foundry hosted session. |
 | 7 | [Observability](responses/observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
 | 8 | [Azure AI Search RAG](responses/azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
 | 9 | [Foundry Memory](responses/foundry_memory/) | An agent with persistent semantic memory backed by a Microsoft Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
 | 10 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
-| 13 | [Custom Storage](responses/custom_storage/) | An agent demonstrating how to implement a custom storage provider for agent sessions (in-memory and Cosmos DB). |
-| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A long-running, crash-resilient workflow demonstrating how `resilient_background=True` lets a background response survive a hard crash of the server process and resume from its last checkpoint instead of restarting from scratch. |
-| 15 | [Steerable Long-Running Agent](responses/steerable_long_running_agent/) | A long-running, non-workflow agent demonstrating how `steerable_conversations=True` lets a new turn on the same conversation cancel and replace a still-running turn instead of waiting for it to finish. Steering is only supported for non-workflow agents. |
-| 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
+| 12 | [Custom Storage](responses/custom_storage/) | A Cosmos-backed MAF session provider scoped by both platform user and hosted sandbox session. |
+| 13 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A native workflow whose stored background response and exact checkpoint survive host replacement. |
+| 14 | [Steerable Long-Running Agent](responses/steerable_long_running_agent/) | A non-workflow agent whose newer conversation turn can preempt an active turn. |
+| 15 | [Using deployed agent](responses/using_deployed_agent.py) | A client that manages the separate hosted sandbox session lifecycle through MAF `FoundryAgent`. |
 
 ## Session Identifiers
 
-Foundry hosted agents use multiple session-related values for different purposes. They are stored together on an
-Agent Framework `AgentSession`, but they are not interchangeable.
+Do not collapse these independent identities into a single `session_id`:
 
-| Value | Owner | Purpose | Lifecycle |
-|-------|-------|---------|-----------|
-| `AgentSession` | Agent Framework | A lightweight application-side container that keeps identifiers and mutable state together across agent runs. | Create one per logical application conversation and pass it to each `agent.run(...)` call. It can be serialized if the application needs to persist it. |
-| `AgentSession.session_id` | Agent Framework/application | Identifies the local `AgentSession`, including lookup in an Agent Framework session store. It does not identify a Foundry resource. | Generated locally by default, or supplied by the application. Deleting a Foundry session does not delete this local identifier. |
-| `AgentSession.service_session_id` | Responses API | Continues the model-side response or conversation chain. For Foundry agents, this may be a response ID sent as `previous_response_id` or a conversation ID sent as `conversation`. | Agent Framework updates and reuses it automatically. It is not the Foundry hosted-agent session ID and is not passed to `project_client.agents.delete_session(...)`. |
-| Foundry `agent_session_id` | Foundry Agent Service | Identifies the hosted-agent [runtime session](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#isolation-model) used by the deployed agent. Foundry can create it on the first request, or the application can create it explicitly with `project_client.agents.create_session(...)`. | Agent Framework stores it in `AgentSession.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]` and sends it as `extra_body["agent_session_id"]` on later requests. Delete it with `project_client.agents.delete_session(agent_name, agent_session_id)` when finished. |
+| Value | Owner | Purpose |
+|-------|-------|---------|
+| Foundry `agent_session_id` | Platform | Routes to one isolated sandbox and its persisted `$HOME`/uploaded files. Responses `conversation` binds one automatically; `previous_response_id` alone does not. Invocations reuses it only through the `agent_session_id` **query parameter**. |
+| Responses `conversation.id` / `response.id` | AgentServer/Responses | Caller-facing conversation history or one stored turn. A stored response ID is also the polling handle for `background=true`; it is not a workflow checkpoint ID. |
+| MAF `AgentSession.session_id` | Agent Framework/application | Identifies the inner agent's state. The host persists it under a user-, sandbox-, and lineage-scoped key when the caller chooses storage. A workflow checkpoint already includes nested AgentExecutor sessions. |
+| MAF `AgentSession.service_session_id` | Inner model service | Optional downstream model continuation in `inner_history="service"` mode. It is persisted privately, not propagated as the caller's Responses ID. |
+| MAF workflow checkpoint ID | Workflow engine | Captures graph, executor, pending approval/user input, and nested agent state. The host associates the **exact** checkpoint with its outer response; it does not expose it to the caller. |
 
-During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
+**Caller-side `FoundryAgent` is different from hosting an inner agent.** The MAF client in
+[`using_deployed_agent.py`](responses/using_deployed_agent.py) retains both the remote hosted session ID and its
+Responses continuation in a caller-owned `AgentSession`:
 
 ```python
 session.service_session_id
@@ -53,15 +60,39 @@ Keep the same `AgentSession` across turns so Agent Framework can forward both va
 read the Foundry `agent_session_id` from `session.state` and pass that value to the Foundry session deletion API.
 See [Using deployed agent](responses/using_deployed_agent.py) for service-created and user-created lifecycle examples.
 
+Inside the hosted process, use **trusted platform user and `agent_session_id`** plus the response/conversation
+lineage for MAF sessions, checkpoints, and approvals. User isolation in Foundry State Store does not, by itself,
+separate two sandboxes owned by the same user. Custom stores must enforce that additional boundary. The checkpoint
+store is durable Foundry state *associated with* the sandbox, not necessarily a file in its `$HOME`.
+
+## Responses execution choices
+
+The caller's `store` controls **outer** Responses persistence. `store=false` does not durably save framework-managed
+session/approval/checkpoint state; cross-turn approvals and user input require `store=true`.
+`background=true` also requires `store=true`. The developer selects a separate inner history source: `host`
+(AgentServer transcript, downstream `store=false`), `service` (downstream `store=true`, only current input), or
+`agent` (the agent's configured MAF history provider). AgentServer handles background scheduling and returns
+`response.id` promptly; it does **not** automatically send `background=true` to the inner chat client. For a
+provider that supports it, [`provider_background.py`](responses/basic/provider_background.py) shows an opt-in mode.
+
+All supported, agent-relevant CreateResponse options are translated to MAF run options. Flattened `extra_body`
+values win on translated-key collisions. A developer hook may remove a caller option so the agent's own
+`default_options` wins, or replace it; unsupported-option handling can ignore, warn, or error. Protocol-owned
+`store`, streaming/background, identity, input, and continuation fields are not blindly forwarded as model options.
+
 ### Invocations API
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](invocations/basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
-| 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
-| 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
+| 1 | [Basic agent and native workflow](invocations/basic/) | A request parser maps application JSON into MAF messages/options or a typed workflow input; the host persists session state by trusted Foundry scope. |
+| 2 | [Break Glass](invocations/break_glass/) | Raw AgentServer routes for applications requiring full control over the Invocations wire contract. |
+| 3 | [Telegram](invocations/telegram/) | Raw AgentServer plus APIM and durable Cosmos history for a custom Telegram webhook/streaming contract. |
 
 ## Running the Agent Host Locally
+
+The commands below require this worktree's `agent-framework-foundry-hosting` package (or a release that includes
+the redesigned API). A deployed host accepted `extra_body={"max_tokens": ...}` and forwarded custom
+`slogan_style` to a workflow parser; other custom fields still need gateway verification.
 
 ### Using `azd`
 

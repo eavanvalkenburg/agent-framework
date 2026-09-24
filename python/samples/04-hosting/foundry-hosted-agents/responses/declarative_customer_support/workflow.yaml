@@ -1,7 +1,7 @@
 # A multi-turn customer-support triage workflow defined declaratively.
 #
-# Each user message re-runs the workflow with the full conversation history
-# available to the invoked agents via Conversation.messages. The TriageAgent
+# Each user message resumes the workflow checkpoint and delivers only the new
+# input. Prior history remains in Conversation.messages in workflow state. The TriageAgent
 # decides on every turn whether to ask a follow-up question, route to a
 # technical specialist, route to a billing specialist, or close the ticket
 # with a general response.

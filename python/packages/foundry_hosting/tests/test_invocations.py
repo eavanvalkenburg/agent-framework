@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from itertools import product
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
@@ -25,7 +25,13 @@ from agent_framework import (
     AgentSession,
     Content,
     Message,
+    ResponseStream,
     ServiceSessionId,
+    SessionStore,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
 )
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -36,9 +42,24 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any
 
-from agent_framework_foundry_hosting import InvocationsHostServer
+from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, WorkflowTurn
 
 # region Helpers
+
+
+@pytest.fixture(autouse=True)
+def _durable_test_sessions(monkeypatch: pytest.MonkeyPatch) -> SessionStore:
+    """Simulate persistence without calling the hosted Azure state-store endpoint."""
+    store = SessionStore()
+
+    def get_store(*_args: Any, **_kwargs: Any) -> SessionStore:
+        return store
+
+    monkeypatch.setattr(
+        "agent_framework_foundry_hosting._invocations.AgentSessionStoreProvider.get_store",
+        get_store,
+    )
+    return store
 
 
 class _FakeAgent:
@@ -70,7 +91,12 @@ class _FakeAgent:
         session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Any:
-        self.calls.append({"messages": messages, "stream": stream, "session": session})
+        self.calls.append({
+            "messages": messages,
+            "stream": stream,
+            "session": session,
+            "options": kwargs.get("options"),
+        })
         if stream:
 
             async def _gen() -> AsyncIterator[AgentResponseUpdate]:
@@ -193,7 +219,6 @@ class TestInit:
     def test_accepts_supports_agent_run(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         assert server._agent is not None  # pyright: ignore[reportPrivateUsage]
-        assert server._sessions == {}  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize("agent", [None, 42])
     def test_rejects_invalid_agent_source(self, agent: Any) -> None:
@@ -303,7 +328,7 @@ class TestHandleInvoke:
         with _request_context(session_id="sess-1"):
             result = await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
 
-        assert bytes(result.body).decode() == "ok"
+        assert json.loads(bytes(result.body)) == {"response": "ok"}
         assert events == ["enter", "run", "exit"]
 
     async def test_factory_agent_context_lifetime_until_stream_closes(self) -> None:
@@ -321,7 +346,7 @@ class TestHandleInvoke:
 
         assert isinstance(response, StreamingResponse)
         iterator = cast(Any, response.body_iterator)
-        assert await anext(iterator) == "one"
+        assert '"text": "one"' in await anext(iterator)
         await iterator.aclose()
 
         assert events == ["enter", "run", "stream_close", "exit"]
@@ -344,37 +369,36 @@ class TestHandleInvoke:
                 _make_request({"message": "two"})
             )
 
-        assert bytes(first.body).decode() == "agent-1"
-        assert bytes(second.body).decode() == "agent-2"
+        assert json.loads(bytes(first.body)) == {"response": "agent-1"}
+        assert json.loads(bytes(second.body)) == {"response": "agent-2"}
         assert len(agents) == 2
         assert agents[0] is not agents[1]
-        assert agents[0].calls[0]["session"] is agents[1].calls[0]["session"]
+        assert agents[0].calls[0]["session"].session_id == agents[1].calls[0]["session"].session_id
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("hosted", [False, True])
-    async def test_reusing_session_skips_serialization_and_construction(self, hosted: bool, stream: bool) -> None:
+    async def test_reusing_session_persists_a_single_agent_session(
+        self, hosted: bool, stream: bool, _durable_test_sessions: SessionStore
+    ) -> None:
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
         server = InvocationsHostServer(agent)
         server.config.is_hosted = hosted
         request = _make_request({"message": "Hi", "stream": stream})
         expected_id = '["sess-1","user-1"]' if hosted else "sess-1"
 
-        with (
-            _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"),
-            patch("agent_framework_foundry_hosting._invocations.json", wraps=json) as serializer,
-            patch("agent_framework_foundry_hosting._invocations.AgentSession", wraps=AgentSession) as session_factory,
-        ):
+        with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
             for _ in range(2):
                 response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
                 if isinstance(response, StreamingResponse):
-                    assert await _collect_stream(response) == "ok"
+                    assert '"text": "ok"' in await _collect_stream(response)
                 else:
-                    assert bytes(response.body).decode() == "ok"
+                    assert json.loads(bytes(response.body)) == {"response": "ok"}
 
-        assert agent.calls[0]["session"] is agent.calls[1]["session"]
         assert agent.calls[0]["session"].session_id == expected_id
-        assert serializer.dumps.call_count == (1 if hosted else 0)
-        session_factory.assert_called_once_with(session_id=expected_id)
+        assert agent.calls[1]["session"].session_id == expected_id
+        persisted = await _durable_test_sessions.get(server._storage_key(("sess-1", "user-1") if hosted else "sess-1"))
+        assert persisted is not None
+        assert persisted.session_id == expected_id
 
     async def test_missing_message_returns_400(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -389,7 +413,7 @@ class TestHandleInvoke:
         request = _make_request({"stream": True})
         with _request_context(session_id="sess-1"):
             response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(response, StreamingResponse)
+        assert isinstance(response, Response)
         assert response.status_code == 400
 
     async def test_partition_key_failure_returns_500(self) -> None:
@@ -410,11 +434,11 @@ class TestHandleInvoke:
 
         assert isinstance(response, Response)
         assert response.status_code == 200
-        assert bytes(response.body).decode() == "Hello!"
-        # Agent is called with the message wrapped in a list and the cached session.
+        assert json.loads(bytes(response.body)) == {"response": "Hello!"}
+        # Agent is called with the message wrapped in a list and a scoped session.
         assert agent.calls[0]["messages"] == ["Hi"]
         assert agent.calls[0]["stream"] is False
-        assert agent.calls[0]["session"] is server._sessions["sess-1"]  # pyright: ignore[reportPrivateUsage]
+        assert agent.calls[0]["session"].session_id == "sess-1"
 
     async def test_streaming_yields_update_text(self) -> None:
         agent = _make_agent(stream_texts=["Hel", "lo", "!"])
@@ -425,23 +449,99 @@ class TestHandleInvoke:
 
         assert isinstance(response, StreamingResponse)
         assert response.media_type == "text/event-stream"
-        assert await _collect_stream(response) == "Hello!"
+        events = await _collect_stream(response)
+        assert all(f'"text": "{part}"' in events for part in ("Hel", "lo", "!"))
+        assert "event: done" in events
         assert agent.calls[0]["messages"] == "Hi"
         assert agent.calls[0]["stream"] is True
 
-    async def test_session_is_reused_across_requests(self) -> None:
+    async def test_stream_finalizes_with_released_core_that_lacks_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("ready")], role="assistant")
+
+        agent = _make_agent()
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        monkeypatch.setattr(agent, "run", MagicMock(return_value=stream))
+        monkeypatch.delattr(ResponseStream, "close")
+        server = InvocationsHostServer(agent)
+        with _request_context(session_id="sandbox"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "Hi", "stream": True})
+            )
+            assert isinstance(response, StreamingResponse)
+            events = await _collect_stream(response)
+
+        assert "event: delta" in events
+        assert "event: done" in events
+        assert "event: error" not in events
+
+    async def test_streaming_agent_factory_failure_yields_an_error_event(self) -> None:
+        async def unavailable_agent() -> _FakeAgent:
+            raise RuntimeError("Cannot initialize this agent.")
+
+        server = InvocationsHostServer(unavailable_agent)
+        with _request_context(session_id="sess-1"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "Hi", "stream": True})
+            )
+
+        assert isinstance(response, StreamingResponse)
+        events = await _collect_stream(response)
+        assert "event: error" in events
+        assert "event: done" not in events
+
+    async def test_session_is_loaded_across_requests(self) -> None:
         agent = _make_agent(response_text="ok")
         server = InvocationsHostServer(agent)
 
         with _request_context(session_id="sess-1"):
             await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
-            first_session = server._sessions["sess-1"]  # pyright: ignore[reportPrivateUsage]
             await server._handle_invoke(_make_request({"message": "two"}))  # pyright: ignore[reportPrivateUsage]
-            second_session = server._sessions["sess-1"]  # pyright: ignore[reportPrivateUsage]
 
-        assert first_session is second_session
-        assert list(server._sessions) == ["sess-1"]  # pyright: ignore[reportPrivateUsage]
-        assert agent.calls[0]["session"] is agent.calls[1]["session"]
+        assert agent.calls[0]["session"].session_id == agent.calls[1]["session"].session_id == "sess-1"
+
+    async def test_two_hosts_observe_the_latest_persisted_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class SerializingStore(SessionStore):
+            async def get(self, session_id: str) -> AgentSession | None:
+                session = await super().get(session_id)
+                return AgentSession.from_dict(session.to_dict()) if session is not None else None
+
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                await super().set(session_id, AgentSession.from_dict(session.to_dict()))
+
+        class CountingAgent(_FakeAgent):
+            def run(
+                self,
+                messages: Any = None,
+                *,
+                stream: bool = False,
+                session: AgentSession | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                assert session is not None
+                session.state["turns"] = session.state.get("turns", 0) + 1
+                return super().run(messages, stream=stream, session=session, **kwargs)
+
+        store = SerializingStore()
+        monkeypatch.setattr(
+            "agent_framework_foundry_hosting._invocations.AgentSessionStoreProvider.get_store",
+            lambda *_args, **_kwargs: store,
+        )
+        first_agent = CountingAgent(response=_make_agent(response_text="ok")._response)
+        second_agent = CountingAgent(response=_make_agent(response_text="ok")._response)
+        first = InvocationsHostServer(first_agent)
+        second = InvocationsHostServer(second_agent)
+
+        with _request_context(session_id="sandbox"):
+            for host in (first, second, first):
+                response = await host._handle_invoke(_make_request({"message": "next"}))  # pyright: ignore[reportPrivateUsage]
+                assert response.status_code == 200
+
+        assert [first_agent.calls[0]["session"].state["turns"], second_agent.calls[0]["session"].state["turns"]] == [
+            1,
+            2,
+        ]
+        assert first_agent.calls[1]["session"].state["turns"] == 3
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize(
@@ -461,7 +561,23 @@ class TestHandleInvoke:
         second_session_id: str,
         second_user_id: str,
     ) -> None:
-        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        class PersistingAgent(_FakeAgent):
+            def run(
+                self,
+                messages: Any = None,
+                *,
+                stream: bool = False,
+                session: AgentSession | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                assert session is not None
+                session.state.setdefault("turn", session.session_id)
+                return super().run(messages, stream=stream, session=session, **kwargs)
+
+        agent = PersistingAgent(
+            response=_make_agent(response_text="ok")._response,
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")])],
+        )
         server = InvocationsHostServer(agent)
         server.config.is_hosted = True
         identifiers = [(first_session_id, first_user_id), (second_session_id, second_user_id)]
@@ -473,20 +589,18 @@ class TestHandleInvoke:
                     _make_request({"message": "Hi", "stream": stream})
                 )
                 if isinstance(response, StreamingResponse):
-                    assert await _collect_stream(response) == "ok"
+                    assert '"text": "ok"' in await _collect_stream(response)
                 else:
-                    assert bytes(response.body).decode() == "ok"
+                    assert json.loads(bytes(response.body)) == {"response": "ok"}
                 assert response.status_code == 200
 
             session = agent.calls[-1]["session"]
             assert isinstance(session, AgentSession)
-            assert session.state == {}
-            session.state["turn"] = (session_id, user_id)
+            assert session.state == {"turn": session.session_id}
             sessions.append(session)
 
         assert sessions[0] is not sessions[1]
         assert sessions[0].session_id != sessions[1].session_id
-        assert len(server._sessions) == 2  # pyright: ignore[reportPrivateUsage]
 
         for (session_id, user_id), session in zip(identifiers, sessions):
             with _request_context(call_id="call-2", session_id=session_id, user_id=user_id):
@@ -494,13 +608,127 @@ class TestHandleInvoke:
                     _make_request({"message": "Continue", "stream": stream})
                 )
                 if isinstance(response, StreamingResponse):
-                    assert await _collect_stream(response) == "ok"
+                    assert '"text": "ok"' in await _collect_stream(response)
                 else:
-                    assert bytes(response.body).decode() == "ok"
+                    assert json.loads(bytes(response.body)) == {"response": "ok"}
                 assert response.status_code == 200
 
-            assert agent.calls[-1]["session"] is session
-            assert session.state == {"turn": (session_id, user_id)}
+            assert agent.calls[-1]["session"].session_id == session.session_id
+            assert agent.calls[-1]["session"].state == {"turn": session.session_id}
+
+
+async def test_invocations_recovers_agent_session_after_host_restart(
+    _durable_test_sessions: SessionStore,
+) -> None:
+    class CountingAgent(_FakeAgent):
+        def run(
+            self,
+            messages: Any = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            assert session is not None
+            session.state["turns"] = session.state.get("turns", 0) + 1
+            return super().run(messages, stream=stream, session=session, **kwargs)
+
+    first_agent = CountingAgent(response=_make_agent(response_text="ok")._response)
+    second_agent = CountingAgent(response=_make_agent(response_text="ok")._response)
+    with _request_context(session_id="durable-session"):
+        first = await InvocationsHostServer(first_agent)._handle_invoke(_make_request({"message": "first"}))  # pyright: ignore[reportPrivateUsage]
+        second = await InvocationsHostServer(second_agent)._handle_invoke(_make_request({"message": "second"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert json.loads(bytes(first.body)) == json.loads(bytes(second.body)) == {"response": "ok"}
+    assert second_agent.calls[0]["session"].state["turns"] == 2
+    persisted = await _durable_test_sessions.get(
+        InvocationsHostServer._storage_key("durable-session")  # pyright: ignore[reportPrivateUsage]
+    )
+    assert persisted is not None
+    assert persisted.state["turns"] == 2
+
+
+async def test_invocations_parser_and_hook_use_maf_runtime_options() -> None:
+    agent = _make_agent(response_text="ok")
+
+    async def parse(request: Request) -> InvocationRun:
+        body = await request.json()
+        return InvocationRun(messages=body["prompt"], options={"temperature": 0.8, "store": True})
+
+    def prepare(_request: Request, options: dict[str, Any]) -> dict[str, Any]:
+        options.pop("store")
+        return options
+
+    server = InvocationsHostServer(agent, parse_request=parse, prepare_options=prepare)
+    with _request_context(session_id="sandbox"):
+        result = await server._handle_invoke(_make_request({"prompt": "hello"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert result.status_code == 200
+    assert agent.calls[0]["messages"] == "hello"
+    assert agent.calls[0]["options"] == {"temperature": 0.8}
+
+
+async def test_invocations_can_resume_a_native_workflow() -> None:
+    def build_workflow(request: Request) -> Workflow:
+        assert request is not None
+
+        @executor(id="counter")
+        async def counter(text: str, ctx: WorkflowContext[Any, str]) -> None:
+            count = ctx.get_state("count", 0) + 1
+            ctx.set_state("count", count)
+            await ctx.yield_output(f"{count}: {text}")
+
+        return WorkflowBuilder(name="invocations-counter", start_executor=counter, output_from="all").build()
+
+    async def parse(request: Request) -> WorkflowTurn[str]:
+        body = await request.json()
+        return WorkflowTurn(input=body["message"], stream=body.get("stream", False))
+
+    server = InvocationsHostServer(workflow=build_workflow, parse_request=parse)
+    with _request_context(session_id="workflow-sandbox"):
+        first = await server._handle_invoke(_make_request({"message": "first"}))  # pyright: ignore[reportPrivateUsage]
+        second = await server._handle_invoke(_make_request({"message": "second"}))  # pyright: ignore[reportPrivateUsage]
+    assert json.loads(bytes(first.body))["output"][0]["data"] == "1: first"
+    assert json.loads(bytes(second.body))["output"][0]["data"] == "2: second"
+    with _request_context(session_id="workflow-sandbox"):
+        streamed = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+            _make_request({"message": "third", "stream": True})
+        )
+        assert isinstance(streamed, StreamingResponse)
+        events = await _collect_stream(streamed)
+    assert "event: output" in events
+    assert "3: third" in events
+    assert "event: done" in events
+
+
+async def test_interrupted_stream_persists_partial_maf_session(_durable_test_sessions: SessionStore) -> None:
+    class CountingStreamAgent(_FakeAgent):
+        def run(
+            self,
+            messages: Any = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            assert session is not None
+            session.state["turns"] = session.state.get("turns", 0) + 1
+            return super().run(messages, stream=stream, session=session, **kwargs)
+
+    agent = CountingStreamAgent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("part")])])
+    server = InvocationsHostServer(agent)
+    with _request_context(session_id="sandbox"):
+        streamed = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+            _make_request({"message": "hello", "stream": True})
+        )
+        assert isinstance(streamed, StreamingResponse)
+        iterator = cast(Any, streamed.body_iterator)
+        assert '"text": "part"' in await anext(iterator)
+        await iterator.aclose()
+
+    persisted = await _durable_test_sessions.get(server._storage_key("sandbox"))  # pyright: ignore[reportPrivateUsage]
+    assert persisted is not None
+    assert persisted.state["turns"] == 1
 
 
 # endregion

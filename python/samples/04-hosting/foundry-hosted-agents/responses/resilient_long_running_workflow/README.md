@@ -20,10 +20,11 @@ The workflow has three executors (see [main.py](main.py)):
 
 ### Agent Hosting
 
-The workflow is hosted as an agent using the [Agent Framework](https://github.com/microsoft/agent-framework)
-`ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-The server receives a callable that creates a fresh workflow and executors for each request. Existing response
-sessions and workflow checkpoints are restored by the host, while the application-owned `FoundryChatClient` is reused.
+The workflow is hosted **natively** using `ResponsesHostServer`; no `workflow.as_agent()` wrapper is needed. This
+sample uses the redesigned hosting API from this worktree (older published betas do not support it). The host
+requires a parser that maps this request's Responses input to the start executor's `str` input. It calls a factory
+which returns a freshly built workflow and executors for every request. Prior checkpoint state is restored from the
+trusted Foundry session and response lineage, while the application-owned `FoundryChatClient` is reused.
 Setting `resilient_background=True` in `ResponsesServerOptions` enables the framework to checkpoint the
 workflow's progress and durably persist streamed output, so a background response can be recovered and
 resumed after a crash (see "Testing resiliency" below).

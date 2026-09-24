@@ -23,7 +23,7 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 
 [`main.py`](main.py) uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It then:
 
-1. Constructs a `FoundryToolbox(credential, load_tools=False)`. The toolbox resolves its MCP endpoint from `TOOLBOX_ENDPOINT`, authenticates every request with the credential, and forwards the platform per-request call-id. `load_tools=False` keeps the toolbox's tools hidden so only its Agent Skills are surfaced.
+1. Constructs a request-owned `FoundryToolbox(credential, load_tools=False)`. The toolbox resolves its MCP endpoint from `TOOLBOX_ENDPOINT` and authenticates each request. Its connection must not reuse a prior caller's call ID; `load_tools=False` keeps toolbox tools hidden so only Agent Skills are surfaced.
 2. Calls `toolbox.as_skills_provider()`, which discovers skills from the well-known `skill://index.json` resource on the toolbox's MCP session and exposes them as an agent context provider.
 3. Passes the toolbox via `tools=` **and** the provider via `context_providers=`. The `tools=` wiring connects the MCP session (the connection the provider reads from); the `context_providers=` wiring runs the advertise/load logic over that session. Both are required — see [main.py](main.py) for the full implementation.
 
@@ -144,6 +144,7 @@ Make sure the skills and toolbox exist in the **same** Foundry project you deplo
 azd env set TOOLBOX_ENDPOINT "<versioned-endpoint-from-step-2>"
 ```
 
-The deployed agent's Managed Identity needs the **Foundry User** role on the Foundry project to discover skills over MCP at startup.
+The deployed agent's Managed Identity needs **Foundry User** on the project to read `skill://` resources at
+runtime. Skill discovery can appear to work without this role while `load_skill` fails to read `SKILL.md`.
 
 > The bundled `skills/` folder and `toolbox.yaml` are authoring inputs only; they are excluded from the deployed container via [`.azdignore`](.azdignore) / [`.dockerignore`](.dockerignore). The running agent discovers everything it needs from the toolbox MCP endpoint.

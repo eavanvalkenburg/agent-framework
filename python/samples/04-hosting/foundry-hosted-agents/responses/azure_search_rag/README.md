@@ -30,7 +30,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 Your identity (or the Managed Identity running the container in production) needs:
 
 - **Azure AI User** on the Foundry project scope
-- **Search Index Data Reader** on the Azure AI Search service (the sample only reads from the index)
+- **Search Index Data Reader** scoped to the specific Azure AI Search index (the sample only reads that index)
 
 ## Provisioning the search index (one time)
 
@@ -41,7 +41,7 @@ The sample assumes the search index already exists and contains documents the ag
 [`provision_index.py`](provision_index.py) creates the index (if it doesn't already exist) and seeds it with the three Contoso Outdoors documents using `DefaultAzureCredential`. Your identity needs the following roles on the **Azure AI Search service** scope:
 
 - **Search Service Contributor** — to create the index
-- **Search Index Data Contributor** — to upload documents
+- **Search Index Data Contributor** on the target index — to upload documents
 
 > Note: `Search Service Contributor` only covers control-plane operations (create/list/delete indexes). It does **not** grant document write access — `Search Index Data Contributor` is required for that even if you already have `Search Service Contributor`.
 
@@ -50,9 +50,10 @@ Grant the roles to your signed-in user (replace `<search-name>` and `<rg>`):
 ```powershell
 $searchId = az search service show -n <search-name> -g <rg> --query id -o tsv
 $me = az ad signed-in-user show --query id -o tsv
+$indexScope = "$searchId/indexes/contoso-outdoors"
 
 az role assignment create --assignee $me --role "Search Service Contributor"   --scope $searchId
-az role assignment create --assignee $me --role "Search Index Data Contributor" --scope $searchId
+az role assignment create --assignee $me --role "Search Index Data Contributor" --scope $indexScope
 ```
 
 Role propagation typically takes 1–5 minutes. Also confirm the search service has RBAC enabled (Portal → search service → **Keys** → **API Access control** → "Both" or "Role-based access control"); if it is set to "API Key" only, every AAD request returns `403 Forbidden`.

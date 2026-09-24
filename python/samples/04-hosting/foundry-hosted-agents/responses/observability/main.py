@@ -6,7 +6,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -42,13 +43,9 @@ async def main():
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
         tools=[get_weather, get_current_location],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+    server = ResponsesHostServer(agent=agent, inner_history="host")
     await server.run_async()
 
 
